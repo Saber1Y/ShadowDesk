@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: oklch(0.13 0.018 180);
+  --color-foreground: oklch(0.94 0.018 165);
+  --color-card: oklch(0.17 0.022 180);
+  --color-primary: oklch(0.88 0.18 116);
+  --color-primary-foreground: oklch(0.16 0.03 140);
+  --color-muted: oklch(0.21 0.025 180);
+  --color-muted-foreground: oklch(0.68 0.035 170);
+  --color-border: oklch(1 0 0 / 11%);
+  --color-ring: oklch(0.88 0.18 116);
+  --color-limeglow: rgba(200, 245, 106, 0.2);
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+}
+
+::selection {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
