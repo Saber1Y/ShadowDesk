@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUpRight, CircleDot, Play, RefreshCw, Terminal } from "lucide-react";
+import { ArrowUpRight, Play, RefreshCw, Terminal } from "lucide-react";
 import type { DashboardState, StreamLine } from "@/lib/types";
 import { PublicView } from "@/components/views/PublicView";
 import { InstitutionalView } from "@/components/views/InstitutionalView";
+import { ShadowDeskMark } from "@/components/shadowdesk-mark";
 
 type Tab = "public" | "institutional";
 
@@ -99,7 +100,7 @@ export default function Page() {
   const allReachable = state.participants.every((p) => p.reachable);
 
   return (
-    <main className="relative min-h-[100dvh] overflow-hidden bg-[#09090b] px-5 py-5 text-foreground md:px-10">
+    <main className="relative min-h-[100dvh] overflow-hidden bg-[#030206] px-5 py-5 text-foreground md:px-10">
       <div
         className="pointer-events-none absolute inset-0 opacity-20"
         style={{
@@ -111,8 +112,8 @@ export default function Page() {
       <div className="relative z-10 mx-auto max-w-[1400px]">
         <header className="fixed left-1/2 top-5 z-50 flex w-[min(1120px,calc(100vw-2rem))] -translate-x-1/2 items-center justify-between rounded-full border border-border bg-card/70 px-4 py-3 shadow-xl shadow-black/10 backdrop-blur-xl md:px-5">
           <div className="flex items-center gap-3 font-mono text-sm tracking-[0.16em]">
-            <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-[0_0_15px_rgba(200,245,106,0.3)]">
-              <CircleDot className="size-4" />
+            <span className="flex size-7 items-center justify-center rounded-md border border-border bg-card/80 p-1 shadow-[0_0_15px_rgba(243,255,151,0.15)]">
+              <ShadowDeskMark className="size-6" />
             </span>
             <span className="hidden text-foreground sm:block">SHADOWDESK</span>
             <span className="hidden font-mono text-[9px] tracking-[0.2em] text-muted-foreground lg:block">PRIVATE INSTITUTIONAL RFQ / DVP</span>
@@ -132,7 +133,7 @@ export default function Page() {
             <button
               onClick={runRound}
               disabled={running || !allReachable}
-              className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-[0_0_20px_rgba(200,245,106,0.2)] transition-all hover:-translate-y-0.5 hover:scale-105 disabled:translate-y-0 disabled:scale-100 disabled:opacity-40"
+              className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-[0_0_20px_rgba(243,255,151,0.2)] transition-all hover:-translate-y-0.5 hover:scale-105 disabled:translate-y-0 disabled:scale-100 disabled:opacity-40"
             >
               {running ? <RefreshCw className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
               {running ? "Running" : "Run round"}
@@ -254,8 +255,8 @@ function ConsoleDock({ open, onToggle, running, lines }: { open: boolean; onTogg
           transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
           className="fixed bottom-4 left-1/2 z-40 w-[min(900px,calc(100vw-2rem))] -translate-x-1/2"
         >
-          <div className="overflow-hidden rounded-2xl border border-border bg-[#09090b]/95 shadow-2xl shadow-black/30 backdrop-blur-xl">
-            <div className="flex items-center gap-2 border-b border-border/50 bg-[#121214] px-4 py-3">
+          <div className="overflow-hidden rounded-2xl border border-border bg-[#030206]/95 shadow-2xl shadow-black/30 backdrop-blur-xl">
+            <div className="flex items-center gap-2 border-b border-border/50 bg-[#0d0e12] px-4 py-3">
               <span className="size-2.5 rounded-full bg-red-500/80" />
               <span className="size-2.5 rounded-full bg-yellow-500/80" />
               <span className="size-2.5 rounded-full bg-green-500/80" />
@@ -285,12 +286,12 @@ function ConsoleDock({ open, onToggle, running, lines }: { open: boolean; onTogg
 
 function ConsoleLine({ text }: { text: string }) {
   const lower = text.toLowerCase();
-  let cls = "text-zinc-400";
+  let cls = "text-taupe";
   if (lower.startsWith("=== ")) cls = "text-primary font-semibold";
-  else if (lower.includes("proposal") || lower.includes("quote") || lower.startsWith("  proposal")) cls = "text-purple-400";
-  else if (lower.startsWith("[dealer ") || lower.includes("sees 0")) cls = "text-purple-300";
-  else if (lower.includes("winner") || lower.includes("sealed") || lower.startsWith("[venue]")) cls = "text-amber-300";
-  else if (lower.includes("settled") || lower.includes("holds") || lower.includes("complete") || lower.includes("but")) cls = "text-emerald-300";
+  else if (lower.includes("proposal") || lower.includes("quote") || lower.startsWith("  proposal")) cls = "text-purple";
+  else if (lower.startsWith("[dealer ") || lower.includes("sees 0")) cls = "text-purple";
+  else if (lower.includes("winner") || lower.includes("sealed") || lower.startsWith("[venue]")) cls = "text-lilac";
+  else if (lower.includes("settled") || lower.includes("holds") || lower.includes("complete") || lower.includes("but")) cls = "text-primary";
   else if (lower.includes("error") || lower.includes("failed") || lower.includes("violation") || lower.includes("rejected")) cls = "text-red-400";
 
   if (lower.startsWith("[") || lower.startsWith("  ")) {
