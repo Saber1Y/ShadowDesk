@@ -1,0 +1,20 @@
+module ShadowDesk.Asset where
+
+data AssetId = AssetId
+  with
+    issuer : Text
+    symbol : Text
+  deriving (Eq, Ord, Show)
+
+template Asset
+  with
+    holder : Party
+    id : AssetId
+    quantity : Decimal
+    reference : Text
+  where
+    signatory holder
+
+    nonconsuming choice Read : Asset
+      controller holder
+      do pure this
