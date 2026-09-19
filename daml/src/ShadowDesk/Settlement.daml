@@ -1,0 +1,64 @@
+module ShadowDesk.Settlement where
+
+import ShadowDesk.Asset
+
+template Deal
+  with
+    reference : Text
+    buyer : Party
+    dealer : Party
+    security : AssetId
+    quantity : Decimal
+    unitPrice : Decimal
+    settlementAsset : AssetId
+    paymentCid : ContractId Asset
+    securityCid : ContractId Asset
+    expiry : Time
+  where
+    signatory buyer, dealer
+
+    choice Settle : ContractId SettlementReceipt
+      controller buyer, dealer
+      do
+        now <- getTime
+        payment <- exercise paymentCid Read
+        lockedSecurity <- exercise securityCid Read
+        assertMsg "Deal has expired" (this.expiry > now)
+        assertMsg "Security amount must match the deal" (lockedSecurity.quantity == this.quantity)
+        assertMsg "Settlement asset mismatch" (payment.id == this.settlementAsset)
+        assertMsg "Payment must cover deal value" (payment.quantity >= this.quantity * this.unitPrice)
+        securityForBuyer <- create Asset with
+          holder = this.buyer
+          id = lockedSecurity.id
+          quantity = lockedSecurity.quantity
+          reference = "DVP-BUY-" <> this.reference
+        payForDealer <- create Asset with
+          holder = this.dealer
+          id = payment.id
+          quantity = this.quantity * this.unitPrice
+          reference = "DVP-PAY-" <> this.reference
+        archive paymentCid
+        archive securityCid
+        create SettlementReceipt with
+          reference = this.reference
+          buyer = this.buyer
+          dealer = this.dealer
+          security = lockedSecurity.id
+          quantity = this.quantity
+          unitPrice = this.unitPrice
+          totalValue = this.quantity * this.unitPrice
+          settledAt = now
+
+template SettlementReceipt
+  with
+    reference : Text
+    buyer : Party
+    dealer : Party
+    security : AssetId
+    quantity : Decimal
+    unitPrice : Decimal
+    totalValue : Decimal
+    settledAt : Time
+  where
+    signatory buyer
+    observer dealer
