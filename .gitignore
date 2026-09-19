@@ -1,0 +1,24 @@
+# --- Node ---
+node_modules/
+*.tsbuildinfo
+next-env.d.ts
+.next/
+
+# --- Daml / Canton ---
+.daml/
+daml/.daml/
+daml/log/
+dist/
+log/
+distributed/
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- OS / editor ---
+.DS_Store
+*.swp
+.idea/
+.vscode/
