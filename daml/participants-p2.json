@@ -1,0 +1,12 @@
+{
+  "default_participant": {
+    "participant_id": "participant2",
+    "host": "127.0.0.1",
+    "port": 18001
+  },
+  "participants": {
+    "participant1": { "host": "127.0.0.1", "port": 6865 },
+    "participant2": { "host": "127.0.0.1", "port": 18001 }
+  },
+  "party_participants": {}
+}
