@@ -1,0 +1,50 @@
+#!/bin/bash
+set -euo pipefail
+
+export PATH="$HOME/.dpm/bin:$PATH"
+
+ROOT="/Users/mac/codes/Shadow Desk"
+LOG_DIR="$ROOT/log/distributed"
+DAR="$ROOT/daml/.daml/dist/shadowdesk-rfq-1.0.0.dar"
+
+echo "==> killing any running sandbox"
+pkill -9 -f "canton-open-source" 2>/dev/null || true
+sleep 2
+
+echo "==> starting two-participant sandbox"
+mkdir -p "$LOG_DIR"
+(cd "$LOG_DIR" && nohup dpm sandbox -c "$ROOT/daml/distributed-run.conf" > dpm.out 2>&1 &)
+
+for i in $(seq 1 240); do
+  if grep -q "Canton sandbox is ready." "$LOG_DIR/dpm.out" 2>/dev/null && \
+     curl -sf -m 2 -o /dev/null "http://127.0.0.1:6864/v2/version" && \
+     curl -sf -m 2 -o /dev/null "http://127.0.0.1:18003/v2/version"; then
+    echo "==> sandbox ready after ${i}s"
+    break
+  fi
+  if [ "$i" -eq 240 ]; then
+    echo "!! sandbox did not become ready; tail of log:"
+    tail -20 "$LOG_DIR/dpm.out"
+    exit 1
+  fi
+  sleep 1
+done
+
+echo "==> upload DAR to participant1"
+(cd "$ROOT/daml" && dpm script \
+  --participant-config participants.json \
+  --dar "$DAR" \
+  --upload-dar=true \
+  --script-name ShadowDesk.Test:noop > /dev/null)
+
+echo "==> upload DAR to participant2"
+(cd "$ROOT/daml" && dpm script \
+  --participant-config participants-p2.json \
+  --dar "$DAR" \
+  --upload-dar=true \
+  --script-name ShadowDesk.Test:noop > /dev/null)
+
+echo "==> running agent demo"
+(cd "$ROOT/agents" && npm run demo)
+
+echo "==> done"
