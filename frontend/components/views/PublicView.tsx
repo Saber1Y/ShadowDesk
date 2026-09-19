@@ -35,7 +35,7 @@ export function PublicView({ state }: { state: DashboardState }) {
         <HudPanel label="Participant fabric" icon={Network} className="h-full">
           <div className="space-y-3">
             {participants.map((p) => (
-              <div key={p.name} className="flex items-center justify-between rounded-xl border border-border bg-[#09090b]/40 px-4 py-3">
+              <div key={p.name} className="flex items-center justify-between rounded-xl border border-border bg-[#030206]/40 px-4 py-3">
                 <div className="flex items-center gap-3">
                   <Server className="size-4 text-muted-foreground" />
                   <div>
@@ -100,7 +100,7 @@ export function PublicView({ state }: { state: DashboardState }) {
 
 function TerminalLog({ events }: { events: DashboardState["public"]["events"] }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-[#09090b] shadow-2xl">
+    <div className="overflow-hidden rounded-2xl border border-border bg-[#030206] shadow-2xl">
       <div className="flex items-center gap-2 border-b border-border/50 bg-[#121214] px-4 py-3">
         <span className="size-2.5 rounded-full bg-red-500/80" />
         <span className="size-2.5 rounded-full bg-yellow-500/80" />

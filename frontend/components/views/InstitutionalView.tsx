@@ -30,7 +30,7 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
             Authorized view served from the buyer's participant node. Prices, block size, and settlement amounts are
             visible only on this projection.
           </p>
-          <div className="flex items-start gap-3 rounded-xl border border-border bg-[#09090b]/40 px-4 py-3">
+          <div className="flex items-start gap-3 rounded-xl border border-border bg-[#030206]/40 px-4 py-3">
             <WalletCards className="mt-0.5 size-4 shrink-0 text-primary" />
             <div className="min-w-0">
               <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">buyer party</p>
@@ -96,7 +96,7 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
                     <div
                       key={`${p.cid}-${p.at}`}
                       className={`flex items-center justify-between rounded-xl border px-4 py-3 transition-colors ${
-                        win ? "border-primary/40 bg-primary/5" : "border-border bg-[#09090b]/40"
+                        win ? "border-primary/40 bg-primary/5" : "border-border bg-[#030206]/40"
                       }`}
                     >
                       <div className="flex items-center gap-3">
@@ -137,11 +137,11 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
                 <Metric label="Total value" value={fmtQty(receipt.totalValue)} accent />
               </div>
               <div className="mt-5 grid grid-cols-2 gap-4">
-                <div className="rounded-xl border border-border bg-[#09090b]/40 px-4 py-3">
+                <div className="rounded-xl border border-border bg-[#030206]/40 px-4 py-3">
                   <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">security</p>
                   <p className="mt-1 font-mono text-[12px] text-foreground">{receipt.security ?? "-"}</p>
                 </div>
-                <div className="rounded-xl border border-border bg-[#09090b]/40 px-4 py-3">
+                <div className="rounded-xl border border-border bg-[#030206]/40 px-4 py-3">
                   <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">settled at</p>
                   <p className="mt-1 font-mono text-[12px] text-foreground">{receipt.settledAt ? tsFull(receipt.settledAt) : "-"}</p>
                 </div>
@@ -164,7 +164,7 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
 
 function DealerRow({ hint, party, note, win }: { hint: string; party: string; note: string; win: boolean }) {
   return (
-    <div className={`flex items-center justify-between rounded-xl border px-4 py-3 ${win ? "border-primary/40 bg-primary/5" : "border-border bg-[#09090b]/40"}`}>
+    <div className={`flex items-center justify-between rounded-xl border px-4 py-3 ${win ? "border-primary/40 bg-primary/5" : "border-border bg-[#030206]/40"}`}>
       <div className="flex items-center gap-3">
         <span className={`size-1.5 rounded-full ${win ? "bg-primary animate-pulse" : "bg-emerald-400"}`} />
         <div>
