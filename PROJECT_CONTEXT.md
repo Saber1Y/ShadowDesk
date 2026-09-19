@@ -8,7 +8,7 @@ Read this file before changing architecture, contract visibility, settlement log
 
 ## Current Status
 
-- Repository state: Daml package scaffolded at `/Users/mac/codes/Shadow Desk/daml`, TypeScript agents in `agents/`, Next.js dashboard in `frontend/`; workspace root has no git repo yet, docs live at repo root.
+- Repository state: git repo initialized at workspace root (branch `main`, remote origin `https://github.com/Saber1Y/ShadowDesk`), Daml package scaffolded at `/Users/mac/codes/Shadow Desk/daml`, TypeScript agents in `agents/`, Next.js dashboard in `frontend/`; runtime artifacts (node_modules, .daml, log/, .next) gitignored. History committed per logical file/unit; dashboard rebranded to the official Canton palette (yellow `#F3FF97`, black `#030206`, white `#FFFFFC`, lilac `#D5A5E3`, purple `#875CFF`, taupe `#A89F91`) with a segmented C-ring mark + `app/icon.svg` favicon.
 - Implementation state: privacy templates compiling, agent services live, dashboard live.
 - Daml state: package `shadowdesk-rfq` 1.0.0 builds to `.daml/dist/shadowdesk-rfq-1.0.0.dar`; seven daml-script tests pass via `dpm test` (six scenarios plus `noop`).
 - Canton state: local Canton 3.5.17 sandbox validated. `dpm sandbox` starts a full single-process network; Ledger API gRPC on 127.0.0.1:6865, HTTP on 6864. Party store persists per-node between runs; readiness must be keyed on the log line `Canton sandbox is ready.`, not on the port.
