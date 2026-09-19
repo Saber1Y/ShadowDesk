@@ -1,0 +1,110 @@
+module ShadowDesk.Rfq where
+
+template BlockTradeRFQ
+  with
+    buyer : Party
+    dealers : [Party]
+    assetToBuy : Text
+    settlementAsset : Text
+    amount : Decimal
+    maxPrice : Decimal
+    reference : Text
+    expiry : Time
+  where
+    signatory buyer
+    observer dealers
+
+    nonconsuming choice SubmitQuoteProposal : ContractId QuoteProposal
+      with
+        dealer : Party
+        offeredPrice : Decimal
+        bidId : Text
+      controller dealer
+      do
+        currentTime <- getTime
+        assertMsg "RFQ has expired" (currentTime < this.expiry)
+        assertMsg "Dealer is not invited to this RFQ" (dealer `elem` this.dealers)
+        assertMsg "Quote price must be positive" (offeredPrice > 0.0)
+        assertMsg "Bid Id must be non-empty" (bidId /= "")
+        create QuoteProposal with
+          rfq = self
+          buyer = this.buyer
+          dealer = dealer
+          assetToBuy = this.assetToBuy
+          settlementAsset = this.settlementAsset
+          amount = this.amount
+          offeredPrice = offeredPrice
+          bidId = bidId
+          expiry = this.expiry
+
+    nonconsuming choice CloseRfq : ()
+      controller buyer
+      do
+        archive self
+
+template QuoteProposal
+  with
+    rfq : ContractId BlockTradeRFQ
+    buyer : Party
+    dealer : Party
+    assetToBuy : Text
+    settlementAsset : Text
+    amount : Decimal
+    offeredPrice : Decimal
+    bidId : Text
+    expiry : Time
+  where
+    signatory dealer
+    observer buyer
+
+    nonconsuming choice AcceptProposal : ContractId SealedQuote
+      with
+        maxPrice : Decimal
+      controller buyer
+      do
+        currentTime <- getTime
+        rfqRef <- fetch this.rfq
+        assertMsg "RFQ has expired" (currentTime < rfqRef.expiry)
+        assertMsg "Quote proposal has expired" (currentTime < this.expiry)
+        assertMsg "RFQ buyer mismatch" (rfqRef.buyer == buyer)
+        assertMsg "Offered price exceeds buyer max price" (this.offeredPrice <= maxPrice)
+        create SealedQuote with
+          rfq = this.rfq
+          buyer = this.buyer
+          dealer = this.dealer
+          assetToBuy = this.assetToBuy
+          settlementAsset = this.settlementAsset
+          amount = this.amount
+          offeredPrice = this.offeredPrice
+          bidId = this.bidId
+          expiry = this.expiry
+
+    nonconsuming choice WithdrawProposal : ()
+      controller dealer
+      do
+        archive self
+
+template SealedQuote
+  with
+    rfq : ContractId BlockTradeRFQ
+    buyer : Party
+    dealer : Party
+    assetToBuy : Text
+    settlementAsset : Text
+    amount : Decimal
+    offeredPrice : Decimal
+    bidId : Text
+    expiry : Time
+  where
+    signatory buyer, dealer
+
+    choice AcceptQuote : ()
+      controller buyer
+      do
+        currentTime <- getTime
+        rfqRef <- fetch this.rfq
+        assertMsg "RFQ has expired" (currentTime < rfqRef.expiry)
+        assertMsg "Quote has expired" (currentTime < this.expiry)
+        assertMsg "Quote price must be positive" (this.offeredPrice > 0.0)
+        assertMsg "Quote amount must be positive" (this.amount > 0.0)
+        pure ()
