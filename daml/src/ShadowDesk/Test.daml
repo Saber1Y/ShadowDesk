@@ -1,0 +1,388 @@
+module ShadowDesk.Test where
+
+import Daml.Script
+import DA.Time (addRelTime, hours)
+import ShadowDesk.Rfq
+import ShadowDesk.Asset
+import ShadowDesk.Settlement
+
+rfqTemplate : Party -> [Party] -> Time -> Text -> BlockTradeRFQ
+rfqTemplate buyer dealers expiry reference = BlockTradeRFQ with
+  buyer = buyer
+  dealers = dealers
+  assetToBuy = "cTBILL"
+  settlementAsset = "cUSDC"
+  amount = 1_000_000.0
+  maxPrice = 101.0
+  reference = reference
+  expiry = expiry
+
+runPrivateRfqLifecycle : Script ()
+runPrivateRfqLifecycle = do
+  buyer <- allocateParty "buyer"
+  dealerA <- allocateParty "dealerA"
+  dealerB <- allocateParty "dealerB"
+  dealerC <- allocateParty "dealerC"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+
+  rfqCid <- submit buyer do
+    createCmd (rfqTemplate buyer [dealerA, dealerB] expiry "RFQ-0001")
+
+  rfqDealerA <- query @BlockTradeRFQ dealerA
+  assertMsg "Invited dealer A must see the RFQ" (length rfqDealerA == 1)
+
+  rfqDealerB <- query @BlockTradeRFQ dealerB
+  assertMsg "Invited dealer B must see the RFQ" (length rfqDealerB == 1)
+
+  rfqDealerC <- query @BlockTradeRFQ dealerC
+  assertMsg "Uninvited dealer C must not see the RFQ" (length rfqDealerC == 0)
+
+  proposalACid <- submit dealerA do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerA
+      offeredPrice = 100.50
+      bidId = "BID-A-1"
+
+  proposalBCid <- submit dealerB do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerB
+      offeredPrice = 100.20
+      bidId = "BID-B-1"
+
+  dealerAViewOfProposalB <- queryContractId dealerA proposalBCid
+  assertMsg "Dealer A cannot see Dealer B quote proposal" (dealerAViewOfProposalB == (None : Optional QuoteProposal))
+
+  dealerBViewOfProposalA <- queryContractId dealerB proposalACid
+  assertMsg "Dealer B cannot see Dealer A quote proposal" (dealerBViewOfProposalA == (None : Optional QuoteProposal))
+
+  sealedACid <- submit buyer do
+    exerciseCmd proposalACid AcceptProposal with
+      maxPrice = 101.0
+
+  sealedBCid <- submit buyer do
+    exerciseCmd proposalBCid AcceptProposal with
+      maxPrice = 101.0
+
+  sealedDealerA <- query @SealedQuote dealerA
+  assertMsg "Dealer A sees exactly its own sealed quote" (length sealedDealerA == 1)
+
+  sealedDealerB <- query @SealedQuote dealerB
+  assertMsg "Dealer B sees exactly its own sealed quote" (length sealedDealerB == 1)
+
+  dealerAViewOfSealedB <- queryContractId dealerA sealedBCid
+  assertMsg "Dealer A cannot fetch Dealer B sealed quote" (dealerAViewOfSealedB == (None : Optional SealedQuote))
+
+  dealerBViewOfSealedA <- queryContractId dealerB sealedACid
+  assertMsg "Dealer B cannot fetch Dealer A sealed quote" (dealerBViewOfSealedA == (None : Optional SealedQuote))
+
+  submitMustFail dealerA do
+    exerciseCmd sealedACid AcceptQuote
+
+  submitMustFail dealerB do
+    exerciseCmd sealedBCid AcceptQuote
+
+  submit buyer do
+    exerciseCmd rfqCid CloseRfq
+
+runAuthorizationAndReplayBoundaries : Script ()
+runAuthorizationAndReplayBoundaries = do
+  buyer <- allocateParty "buyer"
+  dealerA <- allocateParty "dealerA"
+  dealerB <- allocateParty "dealerB"
+  dealerC <- allocateParty "dealerC"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+  let expired = addRelTime now (hours (-24))
+
+  expiredRfqCid <- submit buyer do
+    createCmd (rfqTemplate buyer [dealerA, dealerB] expired "RFQ-EXPIRED")
+
+  submitMustFail dealerA do
+    exerciseCmd expiredRfqCid SubmitQuoteProposal with
+      dealer = dealerA
+      offeredPrice = 100.00
+      bidId = "BID-A-EXPIRED"
+
+  liveRfqCid <- submit buyer do
+    createCmd (rfqTemplate buyer [dealerA, dealerB] expiry "RFQ-0002")
+
+  submitMustFail dealerC do
+    exerciseCmd liveRfqCid SubmitQuoteProposal with
+      dealer = dealerC
+      offeredPrice = 99.00
+      bidId = "BID-C-1"
+
+  proposalACid <- submit dealerA do
+    exerciseCmd liveRfqCid SubmitQuoteProposal with
+      dealer = dealerA
+      offeredPrice = 100.50
+      bidId = "BID-A-2"
+
+  submitMustFail dealerA do
+    exerciseCmd proposalACid AcceptProposal with
+      maxPrice = 101.0
+
+  submitMustFail dealerB do
+    exerciseCmd proposalACid AcceptProposal with
+      maxPrice = 101.0
+
+  sealedACid <- submit buyer do
+    exerciseCmd proposalACid AcceptProposal with
+      maxPrice = 101.0
+
+  submit buyer do
+    exerciseCmd sealedACid AcceptQuote
+
+  submitMustFail buyer do
+    exerciseCmd sealedACid AcceptQuote
+
+runQuoteConstraintValidation : Script ()
+runQuoteConstraintValidation = do
+  buyer <- allocateParty "buyer"
+  dealerA <- allocateParty "dealerA"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+
+  rfqCid <- submit buyer do
+    createCmd (rfqTemplate buyer [dealerA] expiry "RFQ-0003")
+
+  proposalACid <- submit dealerA do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerA
+      offeredPrice = 102.00
+      bidId = "BID-A-3"
+
+  submitMustFail buyer do
+    exerciseCmd proposalACid AcceptProposal with
+      maxPrice = 101.0
+
+runAtomicDvPSettlement : Script ()
+runAtomicDvPSettlement = do
+  buyer <- allocateParty "buyer"
+  dealerA <- allocateParty "dealerA"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+  let cusdc = AssetId with issuer = "ShadowDesk"; symbol = "cUSDC"
+  let ctbill = AssetId with issuer = "ShadowDesk"; symbol = "cTBILL"
+
+  cashCid <- submit buyer do
+    createCmd (Asset with
+      holder = buyer
+      id = cusdc
+      quantity = 200_000_000.0
+      reference = "SEED-BUYER")
+
+  bondCid <- submit dealerA do
+    createCmd (Asset with
+      holder = dealerA
+      id = ctbill
+      quantity = 1_000_000.0
+      reference = "SEED-DEALER")
+
+  rfqCid <- submit buyer do
+    createCmd (rfqTemplate buyer [dealerA] expiry "RFQ-SETTLE")
+
+  proposalCid <- submit dealerA do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerA
+      offeredPrice = 100.50
+      bidId = "BID-SETTLE"
+
+  sealedCid <- submit buyer do
+    exerciseCmd proposalCid AcceptProposal with
+      maxPrice = 101.0
+
+  dealCid <- submit (actAs [buyer, dealerA]) do
+    createCmd (Deal with
+      reference = "DEAL-0001"
+      buyer = buyer
+      dealer = dealerA
+      security = ctbill
+      quantity = 1_000_000.0
+      unitPrice = 100.50
+      settlementAsset = cusdc
+      paymentCid = cashCid
+      securityCid = bondCid
+      expiry = expiry)
+
+  receiptCid <- submit (actAs [buyer, dealerA]) do
+    exerciseCmd dealCid Settle
+
+  receiptView <- queryContractId buyer receiptCid
+  assertMsg "Buyer holds the settlement receipt" (receiptView /= None)
+
+  dealerAssets <- query @Asset dealerA
+  let dealerCash = [(cid, a) | (cid, a) <- dealerAssets, a.id == cusdc]
+  let dealerBonds = [(cid, a) | (cid, a) <- dealerAssets, a.id == ctbill]
+  assertMsg "Dealer no longer holds the bonds" (length dealerBonds == 0)
+  let dealerCashAmount = foldl (\acc (cid, a) -> acc + a.quantity) 0.0 dealerCash
+  assertMsg "Dealer received exact payment" (length dealerCash == 1 && dealerCashAmount == 100_500_000.0)
+
+  buyerAssets <- query @Asset buyer
+  let buyerBonds = [(cid, a) | (cid, a) <- buyerAssets, a.id == ctbill]
+  let buyerBondAmount = foldl (\acc (cid, a) -> acc + a.quantity) 0.0 buyerBonds
+  assertMsg "Buyer holds the bought block atomically" (length buyerBonds == 1 && buyerBondAmount == 1_000_000.0)
+
+  submitMustFail (actAs [buyer, dealerA]) do
+    exerciseCmd dealCid Settle
+
+runDvPRejectsInvalidLeaves : Script ()
+runDvPRejectsInvalidLeaves = do
+  buyer <- allocateParty "buyer"
+  dealerA <- allocateParty "dealerA"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+  let cusdc = AssetId with issuer = "ShadowDesk"; symbol = "cUSDC"
+  let ctbill = AssetId with issuer = "ShadowDesk"; symbol = "cTBILL"
+
+  cashCid <- submit buyer do
+    createCmd (Asset with
+      holder = buyer
+      id = cusdc
+      quantity = 200_000_000.0
+      reference = "SEED-BUYER")
+
+  bondCid <- submit dealerA do
+    createCmd (Asset with
+      holder = dealerA
+      id = ctbill
+      quantity = 1_000_000.0
+      reference = "SEED-DEALER")
+
+  undersizedCashCid <- submit buyer do
+    createCmd (Asset with
+      holder = buyer
+      id = cusdc
+      quantity = 50_000_000.0
+      reference = "SEED-BUYER-SMALL")
+
+  undersizedBondCid <- submit dealerA do
+    createCmd (Asset with
+      holder = dealerA
+      id = ctbill
+      quantity = 999_999.0
+      reference = "SEED-DEALER-EVEN-SMALLER")
+
+  subAgreement <- submit (actAs [buyer, dealerA]) do
+    createCmd (Deal with
+      reference = "DEAL-NOCOVER"
+      buyer = buyer
+      dealer = dealerA
+      security = ctbill
+      quantity = 1_000_000.0
+      unitPrice = 100.50
+      settlementAsset = cusdc
+      paymentCid = cashCid
+      securityCid = undersizedBondCid
+      expiry = expiry)
+
+  smallPaymentDeal <- submit (actAs [buyer, dealerA]) do
+    createCmd (Deal with
+      reference = "DEAL-SMALLPAY"
+      buyer = buyer
+      dealer = dealerA
+      security = ctbill
+      quantity = 1_000_000.0
+      unitPrice = 100.50
+      settlementAsset = cusdc
+      paymentCid = undersizedCashCid
+      securityCid = bondCid
+      expiry = expiry)
+
+  submitMustFail (actAs [buyer, dealerA]) do
+    exerciseCmd subAgreement Settle
+
+  submitMustFail (actAs [buyer, dealerA]) do
+    exerciseCmd smallPaymentDeal Settle
+
+runMultiParticipantPrivacyAndSettlement : Script ()
+runMultiParticipantPrivacyAndSettlement = do
+  buyer <- allocatePartyOn "buyer" (ParticipantName "participant1")
+  dealerA <- allocatePartyOn "dealerA" (ParticipantName "participant1")
+  dealerB <- allocatePartyOn "dealerB" (ParticipantName "participant2")
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+  let cusdc = AssetId with issuer = "ShadowDesk"; symbol = "cUSDC"
+  let ctbill = AssetId with issuer = "ShadowDesk"; symbol = "cTBILL"
+
+  cashCid <- submit buyer do
+    createCmd (Asset with
+      holder = buyer
+      id = cusdc
+      quantity = 200_000_000.0
+      reference = "SEED-BUYER-P1")
+
+  bondCid <- submit dealerA do
+    createCmd (Asset with
+      holder = dealerA
+      id = ctbill
+      quantity = 1_000_000.0
+      reference = "SEED-DEALER-P1")
+
+  rfqCid <- submit buyer do
+    createCmd (rfqTemplate buyer [dealerA, dealerB] expiry "RFQ-MULTI")
+
+  proposalACid <- submit dealerA do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerA
+      offeredPrice = 100.50
+      bidId = "BID-A-MULTI"
+
+  proposalBCid <- submit dealerB do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerB
+      offeredPrice = 100.20
+      bidId = "BID-B-MULTI"
+
+  dealerAViewOfProposalB <- queryContractId dealerA proposalBCid
+  assertMsg "Cross-participant: Dealer A cannot see Dealer B proposal" (dealerAViewOfProposalB == (None : Optional QuoteProposal))
+
+  dealerBViewOfProposalA <- queryContractId dealerB proposalACid
+  assertMsg "Cross-participant: Dealer B cannot see Dealer A proposal" (dealerBViewOfProposalA == (None : Optional QuoteProposal))
+
+  sealedACid <- submit buyer do
+    exerciseCmd proposalACid AcceptProposal with
+      maxPrice = 101.0
+
+  dealerBViewOfSealedA <- queryContractId dealerB sealedACid
+  assertMsg "Cross-participant: Dealer B cannot see sealed price of A" (dealerBViewOfSealedA == (None : Optional SealedQuote))
+
+  dealCid <- submit (actAs [buyer, dealerA]) do
+    createCmd (Deal with
+      reference = "DEAL-MULTI"
+      buyer = buyer
+      dealer = dealerA
+      security = ctbill
+      quantity = 1_000_000.0
+      unitPrice = 100.50
+      settlementAsset = cusdc
+      paymentCid = cashCid
+      securityCid = bondCid
+      expiry = expiry)
+
+  receiptCid <- submit (actAs [buyer, dealerA]) do
+    exerciseCmd dealCid Settle
+
+  receiptView <- queryContractId buyer receiptCid
+  assertMsg "Multi-participant settlement receipt exists for buyer" (receiptView /= None)
+
+  dealerAssets <- query @Asset dealerA
+  let dealerCash = [(cid, a) | (cid, a) <- dealerAssets, a.id == cusdc]
+  let dealerBonds = [(cid, a) | (cid, a) <- dealerAssets, a.id == ctbill]
+  assertMsg "Dealer no longer holds the bonds" (length dealerBonds == 0)
+  let dealerCashAmount = foldl (\acc (cid, a) -> acc + a.quantity) 0.0 dealerCash
+  assertMsg "Dealer received exact payment" (length dealerCash == 1 && dealerCashAmount == 100_500_000.0)
+
+  buyerAssets <- query @Asset buyer
+  let buyerBonds = [(cid, a) | (cid, a) <- buyerAssets, a.id == ctbill]
+  let buyerBondAmount = foldl (\acc (cid, a) -> acc + a.quantity) 0.0 buyerBonds
+  assertMsg "Buyer holds the bought block atomically" (length buyerBonds == 1 && buyerBondAmount == 1_000_000.0)
+noop : Script ()
+noop = pure ()
