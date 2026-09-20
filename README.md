@@ -45,6 +45,11 @@ This kills any running sandbox, starts the two-participant distributed topology 
 
 The dashboard has a **Run round** button that streams a live agent round into a terminal console - the projections update from real ledger queries.
 
+Before running a round, the dashboard lets the user choose the security instrument, settlement instrument, amount, and maximum price.
+The current local demo provisions `cTBILL` and `cUSDC`, so those are the selectable instruments.
+The security and settlement instruments must be different.
+The default values remain 1,000,000 cTBILL at a maximum price of 101.
+
 ## Manual steps (what run-all.sh does)
 
 ```bash
@@ -86,6 +91,10 @@ npm run dev   # http://localhost:3001
 - The winning quote is sealed; the losing dealer on participant2 sees 0 of the winner's quotes (programmatically asserted).
 - `Deal` is created and `Settle` runs atomically on participant1: buyer holds 1,000,000 cTBILL, dealerA holds 100,200,000 cUSDC. A `SettlementReceipt` is written.
 
+To test a custom round from the UI, set the security and settlement instruments, enter a positive amount, and enter a positive maximum price before selecting **Run round**.
+Dealer prices in the local demo are fixed at 100.20 and 100.50, so a maximum price below 100.20 intentionally produces no eligible quote.
+The round reports a readable explanation in the dashboard while the technical details remain available in the expandable error section.
+
 ## Privacy evidence
 
 The demo asserts, and the dashboard surfaces, a live cross-participant privacy check: the losing dealer (participant2) queries the synchronizer for the winner's sealed quote and observes zero contracts. Because `SealedQuote` and the quote payloads are visible only to their signatories/observers, a dealer on a different participant cannot see a competing dealer's price at rest.
@@ -98,6 +107,11 @@ cd agents && npm run demo         # full end-to-end two-participant demo
 cd frontend && npm run typecheck
 cd frontend && npm run build
 ```
+
+The live UI flow can be checked at `http://localhost:3001` after the localnet bootstrap.
+Verify both participants are live, run a custom RFQ, confirm the requested amount and instruments in the Institutional view, and confirm the privacy result reports zero winner quotes to the losing dealer.
+
+For a repeatable API/UI smoke check without resetting the ledger, run `./scripts/localnet/smoke-test.sh` while the sandbox and dashboard are already running.
 
 ## Known limitations
 

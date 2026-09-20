@@ -50,7 +50,9 @@ export class DealerAgent {
     );
     const inv = assets.find((a) => {
       const rec = a as unknown as { createArgument: Asset };
-      return rec.createArgument.id.symbol === assetSpec.symbol && rec.createArgument.holder === this.dealerParty;
+      return rec.createArgument.id.symbol === assetSpec.symbol &&
+        rec.createArgument.holder === this.dealerParty &&
+        Number(rec.createArgument.quantity) === quantity;
     });
     if (inv) return inv.contractId;
     const tx = await this.client.create(

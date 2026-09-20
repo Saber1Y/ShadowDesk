@@ -1,5 +1,6 @@
 import { CantonClient } from "../shared/client.js";
 import { TPL } from "../shared/types.js";
+import type { AssetIdSpec } from "../shared/config.js";
 
 export interface SettlementIntent {
   dealerParty: string;
@@ -30,6 +31,7 @@ export interface DealSpec {
   unitPrice: number;
   paymentCid: string;
   securityCid: string;
+  settlementAsset: AssetIdSpec;
   expiry: string;
 }
 
@@ -46,7 +48,7 @@ export const settleDeal = async (
       security: { issuer: "ShadowDesk", symbol: spec.securitySymbol },
       quantity: String(spec.quantity),
       unitPrice: spec.unitPrice.toFixed(2),
-      settlementAsset: { issuer: "ShadowDesk", symbol: "cUSDC" },
+      settlementAsset: spec.settlementAsset,
       paymentCid: spec.paymentCid,
       securityCid: spec.securityCid,
       expiry: spec.expiry,

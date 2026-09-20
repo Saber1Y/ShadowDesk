@@ -7,8 +7,11 @@ import type { DashboardState, StreamLine } from "@/lib/types";
 import { PublicView } from "@/components/views/PublicView";
 import { InstitutionalView } from "@/components/views/InstitutionalView";
 import { ShadowDeskMark } from "@/components/shadowdesk-mark";
+import { FailureNotice } from "@/components/failure-notice";
+import { describeFailure, type FriendlyFailure } from "@/lib/messages";
 
 type Tab = "public" | "institutional";
+const SUPPORTED_ASSETS = ["cTBILL", "cUSDC"] as const;
 
 const DEFAULT_STATE: DashboardState = {
   updatedAt: "",
@@ -26,21 +29,29 @@ export default function Page() {
   const [tab, setTab] = useState<Tab>("public");
   const [state, setState] = useState<DashboardState>(DEFAULT_STATE);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<FriendlyFailure | null>(null);
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [amount, setAmount] = useState("1000000");
+  const [maxPrice, setMaxPrice] = useState("101");
+  const [assetToBuy, setAssetToBuy] = useState<(typeof SUPPORTED_ASSETS)[number]>("cTBILL");
+  const [settlementAsset, setSettlementAsset] = useState<(typeof SUPPORTED_ASSETS)[number]>("cUSDC");
   const abortRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const resp = await fetch("/api/state", { cache: "no-store" });
-      if (!resp.ok) throw new Error(`status ${resp.status}`);
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error ?? `status ${resp.status}`);
+      }
       const j = (await resp.json()) as DashboardState;
       setState(j);
-      setError(null);
+      setFailure((previous) => previous?.title === "The trading venue is offline" ? null : previous);
     } catch (err) {
-      setError((err as Error).message);
+      const detail = (err as Error).message;
+      setFailure(describeFailure(detail));
     } finally {
       setLoading(false);
     }
@@ -54,6 +65,20 @@ export default function Page() {
 
   const runRound = async () => {
     if (running) return;
+    const parsedAmount = Number(amount);
+    const parsedMaxPrice = Number(maxPrice);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || !Number.isFinite(parsedMaxPrice) || parsedMaxPrice <= 0) {
+      const nextFailure = describeFailure("Enter positive values for amount and maximum price.", "round");
+      setFailure(nextFailure);
+      setLines(["ROUND REJECTED: invalid trade details"]);
+      return;
+    }
+    if (assetToBuy === settlementAsset) {
+      const nextFailure = describeFailure("The security and settlement instrument must be different.", "round");
+      setFailure(nextFailure);
+      setLines(["ROUND REJECTED: security and settlement instruments must differ"]);
+      return;
+    }
     abortRef.current?.abort();
     const ab = new AbortController();
     abortRef.current = ab;
@@ -61,10 +86,17 @@ export default function Page() {
     setLines([]);
     setConsoleOpen(true);
     try {
-      const resp = await fetch("/api/replay", { method: "POST", signal: ab.signal });
+      const resp = await fetch("/api/replay", {
+        method: "POST",
+        signal: ab.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: parsedAmount, maxPrice: parsedMaxPrice, assetToBuy, settlementAsset }),
+      });
       if (!resp.ok) {
-        const j = await resp.json().catch(() => null);
-        setLines([`ROUND REJECTED: ${j?.reason ?? resp.status}`]);
+        const j = await resp.json().catch(() => null) as { reason?: string } | null;
+        const reason = j?.reason ?? `status ${resp.status}`;
+        setFailure(describeFailure(reason, "round"));
+        setLines([`ROUND REJECTED: ${reason}`]);
         return;
       }
       const reader = resp.body?.getReader();
@@ -83,14 +115,30 @@ export default function Page() {
             setLines((prev) => [...prev, raw]);
             continue;
           }
-          if (parsed.snapshot) setState(parsed.snapshot);
-          if (parsed.snapshotError) setLines((prev) => [...prev, `SNAPSHOT ERROR: ${parsed.snapshotError}`]);
-          if (parsed.line) setLines((prev) => [...prev, parsed.line!]);
+          if (parsed.snapshot) {
+            setState(parsed.snapshot);
+            setFailure(null);
+          }
+          if (parsed.snapshotError) {
+            setFailure(describeFailure(parsed.snapshotError, "stream"));
+            setLines((prev) => [...prev, `SNAPSHOT ERROR: ${parsed.snapshotError}`]);
+          }
+          if (parsed.line) {
+            const line = parsed.line;
+            setLines((prev) => [...prev, line]);
+            const lower = line.toLowerCase();
+            if (lower.includes("failed") || lower.includes("rejected") || lower.includes("violation")) {
+              setFailure(describeFailure(line, "round"));
+            }
+          }
           if (parsed.done) setRunning(false);
         }
       }
     } catch (err) {
-      if ((err as Error).name !== "AbortError") setLines((prev) => [...prev, `STREAM ERROR: ${(err as Error).message}`]);
+      if ((err as Error).name !== "AbortError") {
+        setFailure(describeFailure((err as Error).message, "stream"));
+        setLines((prev) => [...prev, `STREAM ERROR: ${(err as Error).message}`]);
+      }
     } finally {
       setRunning(false);
       void refresh();
@@ -98,6 +146,13 @@ export default function Page() {
   };
 
   const allReachable = state.participants.every((p) => p.reachable);
+  const retryFailure = () => {
+    if (failure?.title === "The trade request was not completed" || failure?.title === "The trade did not settle" || failure?.title === "Check the trade details") {
+      void runRound();
+      return;
+    }
+    void refresh();
+  };
 
   return (
     <main className="relative min-h-[100dvh] overflow-hidden bg-[#030206] px-5 py-5 text-foreground md:px-10">
@@ -162,11 +217,23 @@ export default function Page() {
             </div>
           </motion.div>
 
-          {error && (
-            <div className="mb-6 rounded-xl border border-red-400/30 bg-red-400/5 px-4 py-3 font-mono text-[11px] text-red-300">
-              state error: {error}
+          {failure && <FailureNotice failure={failure} onRetry={retryFailure} />}
+
+          <section className="mb-6 rounded-2xl border border-border bg-card/55 p-4 shadow-xl shadow-black/10 backdrop-blur-xl md:p-5">
+            <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">Trade request</p>
+                <p className="mt-1 text-[13px] text-muted-foreground">Choose the wrapped Canton instruments and terms for this round.</p>
+              </div>
+              <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">currently provisioned: cTBILL / cUSDC</span>
             </div>
-          )}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Security" value={assetToBuy} onChange={(value) => setAssetToBuy(value as (typeof SUPPORTED_ASSETS)[number])} options={SUPPORTED_ASSETS} />
+              <Field label="Settlement" value={settlementAsset} onChange={(value) => setSettlementAsset(value as (typeof SUPPORTED_ASSETS)[number])} options={SUPPORTED_ASSETS} />
+              <NumberField label="Amount" value={amount} onChange={setAmount} />
+              <NumberField label="Maximum price" value={maxPrice} onChange={setMaxPrice} step="0.01" />
+            </div>
+          </section>
 
           <div className="md:hidden mb-5 grid grid-cols-2 gap-2">
             <TabButton active={tab === "public"} onClick={() => setTab("public")} mobile>
@@ -217,6 +284,47 @@ function TabButton({ active, onClick, children, mobile }: { active: boolean; onC
     >
       {children}
     </button>
+  );
+}
+
+function Field({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: readonly string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-2 block w-full rounded-xl border border-border bg-[#030206]/70 px-3 py-2.5 font-mono text-[12px] normal-case tracking-normal text-foreground outline-none transition-colors focus:border-primary/60"
+      >
+        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function NumberField({ label, value, onChange, step = "1" }: { label: string; value: string; onChange: (value: string) => void; step?: string }) {
+  return (
+    <label className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+      {label}
+      <input
+        type="number"
+        min="0"
+        step={step}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-2 block w-full rounded-xl border border-border bg-[#030206]/70 px-3 py-2.5 font-mono text-[12px] normal-case tracking-normal text-foreground outline-none transition-colors focus:border-primary/60"
+      />
+    </label>
   );
 }
 

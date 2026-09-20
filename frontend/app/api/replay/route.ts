@@ -5,8 +5,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 let running = false;
+const SUPPORTED_ASSETS = new Set(["cTBILL", "cUSDC"]);
 
-export async function POST() {
+export async function POST(request: Request) {
   if (running) {
     return new Response(JSON.stringify({ ok: false, reason: "A round is already running." }), {
       status: 409,
@@ -14,11 +15,33 @@ export async function POST() {
     });
   }
 
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  const amount = Number(body.amount ?? 1_000_000);
+  const maxPrice = Number(body.maxPrice ?? 101);
+  const assetToBuy = String(body.assetToBuy ?? "cTBILL");
+  const settlementAsset = String(body.settlementAsset ?? "cUSDC");
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(maxPrice) || maxPrice <= 0) {
+    return Response.json({ ok: false, reason: "Enter positive values for amount and maximum price." }, { status: 400 });
+  }
+  if (!SUPPORTED_ASSETS.has(assetToBuy) || !SUPPORTED_ASSETS.has(settlementAsset)) {
+    return Response.json({ ok: false, reason: "Choose a supported Canton instrument." }, { status: 400 });
+  }
+  if (assetToBuy === settlementAsset) {
+    return Response.json({ ok: false, reason: "The security and settlement instrument must be different." }, { status: 400 });
+  }
+
   running = true;
   const agentRoot = process.env.AGENTS_ROOT ?? "/Users/mac/codes/Shadow Desk/agents";
   const child = spawn("npm", ["run", "demo"], {
     cwd: agentRoot,
-    env: { ...process.env, NODE_ENV: "production" },
+    env: {
+      ...process.env,
+      NODE_ENV: "production",
+      SHADOWDESK_AMOUNT: String(amount),
+      SHADOWDESK_MAX_PRICE: String(maxPrice),
+      SHADOWDESK_ASSET_TO_BUY: assetToBuy,
+      SHADOWDESK_SETTLEMENT_ASSET: settlementAsset,
+    },
   });
 
   const encoder = new TextEncoder();

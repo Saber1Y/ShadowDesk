@@ -1,7 +1,7 @@
-import { BuyerAgent, selectWinner, defaultRfq } from "../buyer/buyer.js";
+import { BuyerAgent, selectWinner, defaultRfq, type RfqOverrides } from "../buyer/buyer.js";
 import { DealerAgent, fixedPricePolicy } from "../dealer/dealer.js";
 import { settleDeal, registerSettlementIntent, resolveSettlementIntent } from "../shared/settlement.js";
-import { PARTICIPANTS, CUSDC, CTBILL } from "../shared/config.js";
+import { PARTICIPANTS, CUSDC, CTBILL, SUPPORTED_ASSETS, type AssetIdSpec } from "../shared/config.js";
 
 const P1 = PARTICIPANTS.participant1;
 const P2 = PARTICIPANTS.participant2;
@@ -11,6 +11,21 @@ const dealerSpecs = [
   { hint: "dealerB", price: 100.5, participant: P2 },
 ];
 
+const numberFromEnv = (name: string): number | undefined => {
+  const value = process.env[name];
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${name} must be a positive number`);
+  return parsed;
+};
+
+const assetFromEnv = (name: string, fallback: AssetIdSpec): AssetIdSpec => {
+  const symbol = process.env[name] ?? fallback.symbol;
+  const asset = SUPPORTED_ASSETS[symbol];
+  if (!asset) throw new Error(`${name} must be one of: ${Object.keys(SUPPORTED_ASSETS).join(", ")}`);
+  return asset;
+};
+
 const main = async () => {
   console.log("=== ShadowDesk RFQ demo across two participants ===");
 
@@ -18,16 +33,28 @@ const main = async () => {
   const buyerParty = await buyer.provision();
   console.log(`[buyer] party=${buyerParty}`);
 
+  const assetToBuy = assetFromEnv("SHADOWDESK_ASSET_TO_BUY", CTBILL);
+  const settlementAsset = assetFromEnv("SHADOWDESK_SETTLEMENT_ASSET", CUSDC);
+  if (assetToBuy.symbol === settlementAsset.symbol) {
+    throw new Error("The security and settlement asset must be different.");
+  }
+  const overrides: RfqOverrides = {
+    amount: numberFromEnv("SHADOWDESK_AMOUNT"),
+    maxPrice: numberFromEnv("SHADOWDESK_MAX_PRICE"),
+    assetToBuy,
+    settlementAsset,
+  };
+
   const dealers = await Promise.all(
     dealerSpecs.map(async ({ hint, price, participant }) => {
       const agent = new DealerAgent(participant.jsonApi, participant.name, hint, fixedPricePolicy(price));
       const party = await agent.provision();
-      const invCid = await agent.ensureInventory(CTBILL, 1_000_000);
+      const invCid = await agent.ensureInventory(assetToBuy, overrides.amount ?? 1_000_000);
       registerSettlementIntent({
         dealerParty: party,
-        securitySymbol: CTBILL.symbol,
+        securitySymbol: assetToBuy.symbol,
         securityCid: invCid,
-        quantity: 1_000_000,
+        quantity: overrides.amount ?? 1_000_000,
         participant: participant.name,
       });
       console.log(`[dealer ${hint}] party=${party} inventory=${invCid.slice(0, 16)}...`);
@@ -35,10 +62,10 @@ const main = async () => {
     }),
   );
 
-  const cashCid = await buyer.ensureCash(CUSDC, 200_000_000);
+  const spec = defaultRfq(dealers.length, dealers.map((d) => d.dealerParty!), overrides);
+  const cashCid = await buyer.ensureCash(settlementAsset, Math.ceil(spec.amount * spec.maxPrice * 2));
   console.log(`[buyer] cash=${cashCid.slice(0, 16)}...`);
 
-  const spec = defaultRfq(dealers.length, dealers.map((d) => d.dealerParty!));
   console.log(`[buyer] creating RFQ ${spec.reference}: ${spec.amount} ${spec.assetToBuy.symbol} max@${spec.maxPrice}`);
   const rfqCid = await buyer.createRfq(spec);
   console.log(`[buyer] rfq=${rfqCid.slice(0, 16)}...`);
@@ -113,22 +140,23 @@ const main = async () => {
     unitPrice: Number(winner.offeredPrice),
     paymentCid: cashCid,
     securityCid: intent.securityCid,
+    settlementAsset: spec.settlementAsset,
     expiry: spec.expiry,
   });
   console.log(`[venue] DvP settled on ${P1.name}: receipt=${receiptCid.slice(0, 16)}... value=${receipt.totalValue}`);
 
   const end = await buyer.client.ledgerEnd();
   const buyerAssets = await buyer.client.queryActiveContracts(buyerParty, ["ShadowDesk.Asset:Asset"], end);
-  const buyerBonds = buyerAssets.filter((a: any) => a.createArgument?.id?.symbol === CTBILL.symbol);
+  const buyerBonds = buyerAssets.filter((a: any) => a.createArgument?.id?.symbol === assetToBuy.symbol);
   console.log(
-    `[buyer] holds ${buyerBonds.length} × ${CTBILL.symbol} (qty ${buyerBonds[0]?.createArgument.quantity ?? "0"})`,
+    `[buyer] holds ${buyerBonds.length} × ${assetToBuy.symbol} (qty ${buyerBonds[0]?.createArgument.quantity ?? "0"})`,
   );
 
   const dEnd = await winnerDealer.client.ledgerEnd();
   const dealerAssets = await winnerDealer.client.queryActiveContracts(winnerDealer.dealerParty!, ["ShadowDesk.Asset:Asset"], dEnd);
-  const dealerCash = dealerAssets.filter((a: any) => a.createArgument?.id?.symbol === CUSDC.symbol);
+  const dealerCash = dealerAssets.filter((a: any) => a.createArgument?.id?.symbol === settlementAsset.symbol);
   console.log(
-    `[dealer ${winnerDealer.dealerPartyHint}] holds ${dealerCash.length} × ${CUSDC.symbol} (qty ${dealerCash[0]?.createArgument.quantity ?? "0"})`,
+    `[dealer ${winnerDealer.dealerPartyHint}] holds ${dealerCash.length} × ${settlementAsset.symbol} (qty ${dealerCash[0]?.createArgument.quantity ?? "0"})`,
   );
 
   console.log("\n=== DEMO COMPLETE: atomic DvP settled, cross-participant quote secrecy intact ===");

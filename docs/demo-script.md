@@ -15,6 +15,8 @@ Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environ
 
 - Hit **Institutional** - the buyer view.
 - Show the buyer party, holdings (cTBILL block, cUSDC spent), and the live RFQ: 1,000,000 cTBILL, max price 101, two invited dealers.
+- Before running another round, show the **Trade request** controls: security, settlement instrument, amount, and maximum price.
+- Explain that the local demo currently provisions `cTBILL` and `cUSDC`; the values are defaults, not fixed contract requirements.
 
 ## 3. Registration and quotes (0:40)
 
@@ -43,6 +45,7 @@ Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environ
 > "Now the trade settles. Delivery and payment exchange in a single Canton transaction - the fund gets the asset only if the dealer gets paid."
 
 - Click **Run round** and let the streaming console execute on the live ledger.
+- For a custom test, use a smaller amount such as 500,000 and keep the maximum price at 101.
 - Point at the terminal: two proposals collected, deterministic winner, sealed quote, losing dealer sees 0 of winner's quotes (assertion bar), **DvP settled on participant 1** receipt with value.
 - On completion show the banner: **DEMO COMPLETE: atomic DvP settled, cross-participant quote secrecy intact**.
 

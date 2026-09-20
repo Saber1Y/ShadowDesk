@@ -15,3 +15,8 @@ export interface AssetIdSpec {
 
 export const CUSDC: AssetIdSpec = { issuer: "ShadowDesk", symbol: "cUSDC" };
 export const CTBILL: AssetIdSpec = { issuer: "ShadowDesk", symbol: "cTBILL" };
+
+export const SUPPORTED_ASSETS: Record<string, AssetIdSpec> = {
+  cTBILL: CTBILL,
+  cUSDC: CUSDC,
+};

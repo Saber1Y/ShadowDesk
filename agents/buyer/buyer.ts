@@ -12,14 +12,21 @@ export interface RfqSpec {
   expiry: string;
 }
 
-export const defaultRfq = (dealerCount: number, dealerParties: string[]): RfqSpec => {
+export interface RfqOverrides {
+  amount?: number;
+  maxPrice?: number;
+  assetToBuy?: AssetIdSpec;
+  settlementAsset?: AssetIdSpec;
+}
+
+export const defaultRfq = (dealerCount: number, dealerParties: string[], overrides: RfqOverrides = {}): RfqSpec => {
   const expiry = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
   return {
     reference: `RFQ-DEMO-${Date.now()}`,
-    assetToBuy: CTBILL,
-    settlementAsset: CUSDC,
-    amount: 1_000_000,
-    maxPrice: 101.0,
+    assetToBuy: overrides.assetToBuy ?? CTBILL,
+    settlementAsset: overrides.settlementAsset ?? CUSDC,
+    amount: overrides.amount ?? 1_000_000,
+    maxPrice: overrides.maxPrice ?? 101.0,
     dealers: dealerParties,
     expiry,
   };
@@ -69,7 +76,9 @@ export class BuyerAgent {
     );
     const cash = assets.find((a) => {
       const rec = a as unknown as { createArgument: Asset };
-      return rec.createArgument.id.symbol === cashSpec.symbol && rec.createArgument.holder === this.buyerParty;
+      return rec.createArgument.id.symbol === cashSpec.symbol &&
+        rec.createArgument.holder === this.buyerParty &&
+        Number(rec.createArgument.quantity) >= quantity;
     });
     if (cash) return cash.contractId;
     const tx = await this.client.create(
