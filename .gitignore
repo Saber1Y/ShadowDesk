@@ -22,3 +22,5 @@ distributed/
 *.swp
 .idea/
 .vscode/
+# Playwright default-named recordings (keep the tidy demo-walkthrough.* outputs)
+docs/demo-walkthrough/page@*.webm
