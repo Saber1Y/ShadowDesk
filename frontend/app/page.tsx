@@ -11,7 +11,6 @@ import { FailureNotice } from "@/components/failure-notice";
 import { describeFailure, type FriendlyFailure } from "@/lib/messages";
 
 type Tab = "public" | "institutional";
-const SUPPORTED_ASSETS = ["cTBILL", "cUSDC"] as const;
 
 const DEFAULT_STATE: DashboardState = {
   updatedAt: "",
@@ -35,8 +34,8 @@ export default function Page() {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [amount, setAmount] = useState("1000000");
   const [maxPrice, setMaxPrice] = useState("101");
-  const [assetToBuy, setAssetToBuy] = useState<(typeof SUPPORTED_ASSETS)[number]>("cTBILL");
-  const [settlementAsset, setSettlementAsset] = useState<(typeof SUPPORTED_ASSETS)[number]>("cUSDC");
+  const [assetToBuy, setAssetToBuy] = useState("cTBILL");
+  const [settlementAsset, setSettlementAsset] = useState("cUSDC");
   const abortRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
@@ -225,11 +224,11 @@ export default function Page() {
                 <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">Trade request</p>
                 <p className="mt-1 text-[13px] text-muted-foreground">Choose the wrapped Canton instruments and terms for this round.</p>
               </div>
-              <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">currently provisioned: cTBILL / cUSDC</span>
+              <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">local wrapped Asset contracts</span>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Security" value={assetToBuy} onChange={(value) => setAssetToBuy(value as (typeof SUPPORTED_ASSETS)[number])} options={SUPPORTED_ASSETS} />
-              <Field label="Settlement" value={settlementAsset} onChange={(value) => setSettlementAsset(value as (typeof SUPPORTED_ASSETS)[number])} options={SUPPORTED_ASSETS} />
+              <AssetField label="Security" value={assetToBuy} onChange={setAssetToBuy} listId="security-assets" />
+              <AssetField label="Settlement" value={settlementAsset} onChange={setSettlementAsset} listId="settlement-assets" />
               <NumberField label="Amount" value={amount} onChange={setAmount} />
               <NumberField label="Maximum price" value={maxPrice} onChange={setMaxPrice} step="0.01" />
             </div>
@@ -287,27 +286,34 @@ function TabButton({ active, onClick, children, mobile }: { active: boolean; onC
   );
 }
 
-function Field({
+function AssetField({
   label,
   value,
-  options,
   onChange,
+  listId,
 }: {
   label: string;
   value: string;
-  options: readonly string[];
   onChange: (value: string) => void;
+  listId: string;
 }) {
   return (
     <label className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
       {label}
-      <select
+      <input
+        list={listId}
+        type="text"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,31}"
+        maxLength={32}
+        placeholder="e.g. cTBILL"
         className="mt-2 block w-full rounded-xl border border-border bg-[#030206]/70 px-3 py-2.5 font-mono text-[12px] normal-case tracking-normal text-foreground outline-none transition-colors focus:border-primary/60"
-      >
-        {options.map((option) => <option key={option} value={option}>{option}</option>)}
-      </select>
+      />
+      <datalist id={listId}>
+        <option value="cTBILL" />
+        <option value="cUSDC" />
+      </datalist>
     </label>
   );
 }

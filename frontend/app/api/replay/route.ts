@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 let running = false;
-const SUPPORTED_ASSETS = new Set(["cTBILL", "cUSDC"]);
+const ASSET_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
 export async function POST(request: Request) {
   if (running) {
@@ -23,8 +23,8 @@ export async function POST(request: Request) {
   if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(maxPrice) || maxPrice <= 0) {
     return Response.json({ ok: false, reason: "Enter positive values for amount and maximum price." }, { status: 400 });
   }
-  if (!SUPPORTED_ASSETS.has(assetToBuy) || !SUPPORTED_ASSETS.has(settlementAsset)) {
-    return Response.json({ ok: false, reason: "Choose a supported Canton instrument." }, { status: 400 });
+  if (!ASSET_SYMBOL.test(assetToBuy) || !ASSET_SYMBOL.test(settlementAsset)) {
+    return Response.json({ ok: false, reason: "Use asset symbols with 1-32 letters, numbers, dots, dashes, or underscores." }, { status: 400 });
   }
   if (assetToBuy === settlementAsset) {
     return Response.json({ ok: false, reason: "The security and settlement instrument must be different." }, { status: 400 });

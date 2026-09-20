@@ -46,7 +46,8 @@ This kills any running sandbox, starts the two-participant distributed topology 
 The dashboard has a **Run round** button that streams a live agent round into a terminal console - the projections update from real ledger queries.
 
 Before running a round, the dashboard lets the user choose the security instrument, settlement instrument, amount, and maximum price.
-The current local demo provisions `cTBILL` and `cUSDC`, so those are the selectable instruments.
+The default local demo uses `cTBILL` and `cUSDC`, and users can enter other local wrapped `Asset` symbols.
+The local ledger creates those demo assets with issuer `ShadowDesk`; this is not yet a DevNet/CIP-025 registry lookup.
 The security and settlement instruments must be different.
 The default values remain 1,000,000 cTBILL at a maximum price of 101.
 

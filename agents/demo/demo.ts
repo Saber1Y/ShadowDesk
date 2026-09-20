@@ -1,7 +1,7 @@
 import { BuyerAgent, selectWinner, defaultRfq, type RfqOverrides } from "../buyer/buyer.js";
 import { DealerAgent, fixedPricePolicy } from "../dealer/dealer.js";
 import { settleDeal, registerSettlementIntent, resolveSettlementIntent } from "../shared/settlement.js";
-import { PARTICIPANTS, CUSDC, CTBILL, SUPPORTED_ASSETS, type AssetIdSpec } from "../shared/config.js";
+import { PARTICIPANTS, CUSDC, CTBILL, type AssetIdSpec } from "../shared/config.js";
 
 const P1 = PARTICIPANTS.participant1;
 const P2 = PARTICIPANTS.participant2;
@@ -21,9 +21,10 @@ const numberFromEnv = (name: string): number | undefined => {
 
 const assetFromEnv = (name: string, fallback: AssetIdSpec): AssetIdSpec => {
   const symbol = process.env[name] ?? fallback.symbol;
-  const asset = SUPPORTED_ASSETS[symbol];
-  if (!asset) throw new Error(`${name} must be one of: ${Object.keys(SUPPORTED_ASSETS).join(", ")}`);
-  return asset;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(symbol)) {
+    throw new Error(`${name} must be 1-32 letters, numbers, dots, dashes, or underscores`);
+  }
+  return { issuer: "ShadowDesk", symbol };
 };
 
 const main = async () => {

@@ -16,7 +16,8 @@ Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environ
 - Hit **Institutional** - the buyer view.
 - Show the buyer party, holdings (cTBILL block, cUSDC spent), and the live RFQ: 1,000,000 cTBILL, max price 101, two invited dealers.
 - Before running another round, show the **Trade request** controls: security, settlement instrument, amount, and maximum price.
-- Explain that the local demo currently provisions `cTBILL` and `cUSDC`; the values are defaults, not fixed contract requirements.
+- Explain that the local demo defaults to `cTBILL` and `cUSDC`, while the UI also accepts other local wrapped `Asset` symbols.
+- Clarify that arbitrary symbols use the local `ShadowDesk` issuer and are not yet verified against a DevNet/CIP-025 registry.
 
 ## 3. Registration and quotes (0:40)
 
