@@ -78,6 +78,21 @@ npm install
 npm run dev   # http://localhost:3001
 ```
 
+## HackCanton shared DevNet
+
+The HackCanton DevNet uses a shared participant node. Follow the [NODERS quickstart](https://hackmd.io/e3XQxMggRw2m5N7nxzQYZA?view) to onboard your AppsFactory account, create parties in the Node Console, and upload the DAR through Collections.
+
+For dashboard state reads, copy the DevNet values from `.env.example` into `frontend/.env.local` and set the access token, refresh token, Ledger user ID, and Console-created buyer/dealer party IDs locally.
+Never commit credentials or tokens.
+The token refresh helper persists a rotated refresh token with user-only file permissions under `~/.config/shadowdesk/` by default.
+
+Set both participant URL variables to the shared JSON Ledger API endpoint from the NODERS guide.
+The dashboard then reports one unique participant endpoint and marks cross-participant privacy as unverified.
+The shared-node guide grants the ledger user `CanActAs` and `CanReadAs` on parties created by that user, so the DevNet setup does not currently prove the LocalNet dealer-isolation boundary.
+
+DevNet RFQ execution is intentionally disabled until the demo's locally seeded `ShadowDesk.Asset` contracts are replaced with real registry-backed token holdings and settlement.
+The DevNet status view can authenticate and read the configured party projections in the meantime.
+
 ## What happens during the agents demo
 
 ```
