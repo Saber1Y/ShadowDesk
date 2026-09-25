@@ -52,6 +52,16 @@ export const describeFailure = (value: unknown, context = "state"): FriendlyFail
     };
   }
 
+  if (raw.includes("rejected this identity") || raw.includes("invalid token")) {
+    return {
+      title: "This identity is not authorized on the ledger",
+      message: "You are signed in, but the Canton Ledger API refused this identity.",
+      action: "Onboard the account to the HackCanton participant in the Wallet, and confirm its Daml user name matches the signed-in identity.",
+      tone: "error",
+      detail,
+    };
+  }
+
   if (context === "round" || raw.includes("rejected") || raw.includes("maxprice") || raw.includes("proposal")) {
     return {
       title: "The trade request was not completed",
