@@ -145,6 +145,7 @@ export default function Page() {
   };
 
   const allReachable = state.participants.every((p) => p.reachable);
+  const participantCount = new Set(state.participants.map((participant) => participant.jsonApi)).size;
   const retryFailure = () => {
     if (failure?.title === "The trade request was not completed" || failure?.title === "The trade did not settle" || failure?.title === "Check the trade details") {
       void runRound();
@@ -256,7 +257,7 @@ export default function Page() {
           </AnimatePresence>
 
           <footer className="mt-14 flex flex-col items-center justify-between gap-3 border-t border-border pt-6 pb-2 font-mono text-[9px] tracking-[0.14em] text-zinc-600 sm:flex-row">
-            <span>SHADOWDESK · CANTON NETWORK 3.5.17 · TWO PARTICIPANTS · ONE SYNCHRONIZER</span>
+            <span>SHADOWDESK · CANTON NETWORK 3.5.17 · {participantCount} PARTICIPANT{participantCount === 1 ? "" : "S"} · ONE SYNCHRONIZER</span>
             <span>PUBLIC VIEW = METADATA ONLY · BUYER VIEW = AUTHORIZED PROJECTION</span>
           </footer>
         </div>
