@@ -53,7 +53,10 @@ const P1 = new CantonClient(PARTICIPANTS.participant1.jsonApi);
 const P2 = new CantonClient(PARTICIPANTS.participant2.jsonApi);
 
 export const loadDashboardState = async (): Promise<DashboardState> => {
-  if (process.env.SHADOWDESK_NETWORK === "devnet") await getCantonAuth();
+  if (process.env.SHADOWDESK_NETWORK === "devnet") {
+    await getCantonAuth();
+    await P1.verifyLedgerIdentity();
+  }
   const [p1Ok, p2Ok] = [await P1.ping(), await P2.ping()];
   const participants = [
     {
