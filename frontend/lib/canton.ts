@@ -42,6 +42,7 @@ export class CantonClient {
 
   async req(path: string, init?: RequestInit): Promise<JsonMap> {
     const auth = await getCantonAuth();
+    if (auth.ledgerUserId) this.userId = auth.ledgerUserId;
     const resp = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
