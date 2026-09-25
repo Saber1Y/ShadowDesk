@@ -1,4 +1,5 @@
 import { CantonClient, PARTICIPANTS, partyHint, shortCid, templateSuffix } from "@/lib/canton";
+import { getCantonAuth } from "@/lib/canton-auth";
 
 interface RawCreated {
   offset: number;
@@ -52,7 +53,8 @@ const P1 = new CantonClient(PARTICIPANTS.participant1.jsonApi);
 const P2 = new CantonClient(PARTICIPANTS.participant2.jsonApi);
 
 export const loadDashboardState = async (): Promise<DashboardState> => {
-const [p1Ok, p2Ok] = [await P1.ping(), await P2.ping()];
+  if (process.env.SHADOWDESK_NETWORK === "devnet") await getCantonAuth();
+  const [p1Ok, p2Ok] = [await P1.ping(), await P2.ping()];
   const participants = [
     {
       name: PARTICIPANTS.participant1.name,
@@ -69,17 +71,23 @@ const [p1Ok, p2Ok] = [await P1.ping(), await P2.ping()];
   ];
 
   const parties: DashboardState["parties"] = { buyer: null, dealerA: null, dealerB: null };
-  const map = new Map<string, string>();
-  if (p1Ok) {
-    for (const p of await allPartiesSafe(P1, ["buyer", "dealerA"])) map.set(p, partyHint(p));
-  }
-  if (p2Ok) {
-    for (const p of await allPartiesSafe(P2, ["dealerB"])) map.set(p, partyHint(p));
-  }
-  for (const [party, hint] of map) {
-    if (hint === "buyer") parties.buyer = party;
-    if (hint === "dealerA") parties.dealerA = party;
-    if (hint === "dealerB") parties.dealerB = party;
+  if (process.env.SHADOWDESK_NETWORK === "devnet") {
+    parties.buyer = process.env.SHADOWDESK_BUYER_PARTY ?? null;
+    parties.dealerA = process.env.SHADOWDESK_DEALER_A_PARTY ?? null;
+    parties.dealerB = process.env.SHADOWDESK_DEALER_B_PARTY ?? null;
+  } else {
+    const map = new Map<string, string>();
+    if (p1Ok) {
+      for (const p of await allPartiesSafe(P1, ["buyer", "dealerA"])) map.set(p, partyHint(p));
+    }
+    if (p2Ok) {
+      for (const p of await allPartiesSafe(P2, ["dealerB"])) map.set(p, partyHint(p));
+    }
+    for (const [party, hint] of map) {
+      if (hint === "buyer") parties.buyer = party;
+      if (hint === "dealerA") parties.dealerA = party;
+      if (hint === "dealerB") parties.dealerB = party;
+    }
   }
 
   const empty: DashboardState["public"] = { events: [], counts: { rfqs: 0, proposals: 0, sealed: 0, deals: 0, receipts: 0, assets: 0 } };
@@ -217,6 +225,9 @@ const checkPrivacy = async (
   parties: DashboardState["parties"],
   p1Records: RawCreated[],
 ): Promise<{ checked: boolean; winnerDealer: string | null; losingDealer: string | null; losingSeesWinnerQuotes: number | null }> => {
+  if (P1.baseUrl === P2.baseUrl) {
+    return { checked: false, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null };
+  }
   const sealed = p1Records.filter((r) => r.templateId.split(":").pop() === "SealedQuote");
   if (sealed.length === 0) return { checked: true, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null };
 
