@@ -3,9 +3,16 @@ export interface ParticipantEndpoint {
   jsonApi: string;
 }
 
+const localParticipant1Url = "http://127.0.0.1:6864";
+const localParticipant2Url = "http://127.0.0.1:18003";
+const configuredParticipant1Url = process.env.SHADOWDESK_PARTICIPANT1_URL || localParticipant1Url;
+const configuredParticipant2Url = process.env.SHADOWDESK_PARTICIPANT2_URL || (
+  process.env.SHADOWDESK_NETWORK === "devnet" ? configuredParticipant1Url : localParticipant2Url
+);
+
 export const PARTICIPANTS: Record<string, ParticipantEndpoint> = {
-  participant1: { name: "participant1", jsonApi: "http://127.0.0.1:6864" },
-  participant2: { name: "participant2", jsonApi: "http://127.0.0.1:18003" },
+  participant1: { name: "participant1", jsonApi: configuredParticipant1Url },
+  participant2: { name: "participant2", jsonApi: configuredParticipant2Url },
 };
 
 export interface AssetIdSpec {
@@ -65,9 +72,9 @@ export const settlementEnvironment = (): SettlementEnvironment => {
   }
 
   const participant1 = environmentValue("SHADOWDESK_PARTICIPANT1_URL");
-  const participant2 = environmentValue("SHADOWDESK_PARTICIPANT2_URL");
+  const participant2 = environmentValue("SHADOWDESK_PARTICIPANT2_URL") ?? participant1;
   if (!participant1 || !participant2) {
-    throw new Error("DevNet requires SHADOWDESK_PARTICIPANT1_URL and SHADOWDESK_PARTICIPANT2_URL");
+    throw new Error("DevNet requires SHADOWDESK_PARTICIPANT1_URL");
   }
   return {
     network,
