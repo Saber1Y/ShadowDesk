@@ -58,7 +58,7 @@ export class BuyerAgent {
   buyerParty: string | null = null;
 
   constructor(baseUrl: string, participantName: string) {
-    this.client = new CantonClient(baseUrl, participantName, "shadowdesk-buyer");
+    this.client = new CantonClient(baseUrl, participantName, process.env.SHADOWDESK_LEDGER_USER_ID ?? "shadowdesk-buyer");
   }
 
   async provision(): Promise<string> {
