@@ -2,22 +2,46 @@ import { TPL, type TemplateKey, type Party, type CreatedEvent, type TransactionR
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
+const subjectFromToken = (token: string | undefined): string | undefined => {
+  const payload = token?.split(".")[1];
+  if (!payload) return undefined;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { sub?: unknown };
+    return typeof claims.sub === "string" ? claims.sub : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export class CantonClient {
   readonly baseUrl: string;
   readonly participantName: string;
   readonly userId: string;
 
-  constructor(baseUrl: string, participantName: string, userId = "shadowdesk-agent") {
+  constructor(baseUrl: string, participantName: string, userId = process.env.SHADOWDESK_LEDGER_USER_ID ?? "shadowdesk-agent") {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.participantName = participantName;
-    this.userId = userId;
+    if (process.env.SHADOWDESK_NETWORK === "devnet") {
+      const ledgerUserId = process.env.SHADOWDESK_LEDGER_USER_ID ?? subjectFromToken(process.env.SHADOWDESK_CANTON_ACCESS_TOKEN);
+      if (!ledgerUserId) throw new Error("DevNet JWT subject is required as the Ledger API userId.");
+      this.userId = ledgerUserId;
+    } else {
+      this.userId = userId;
+    }
   }
 
   private async req(path: string, init?: RequestInit): Promise<any> {
+    const accessToken = process.env.SHADOWDESK_NETWORK === "devnet"
+      ? process.env.SHADOWDESK_CANTON_ACCESS_TOKEN
+      : undefined;
+    if (process.env.SHADOWDESK_NETWORK === "devnet" && !accessToken) {
+      throw new Error("DevNet requests require SHADOWDESK_CANTON_ACCESS_TOKEN.");
+    }
     const resp = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...(init?.headers ?? {}),
       },
     });
@@ -70,6 +94,14 @@ export class CantonClient {
   }
 
   async ensureParty(hint: string): Promise<Party> {
+    if (process.env.SHADOWDESK_NETWORK === "devnet") {
+      const partyVariable = `SHADOWDESK_${hint.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase()}_PARTY`;
+      const party = process.env[partyVariable];
+      if (!party) {
+        throw new Error(`DevNet party is not configured. Set ${partyVariable} after creating it in the Node Console.`);
+      }
+      return party;
+    }
     const existing = await this.listParties();
     const match = existing.find((p) => this.matchesHint(p, hint));
     if (match) return match;
