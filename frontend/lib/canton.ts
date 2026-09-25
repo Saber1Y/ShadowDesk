@@ -1,3 +1,5 @@
+import { getCantonAuth } from "@/lib/canton-auth";
+
 export interface ParticipantEndpoint {
   name: string;
   jsonApi: string;
@@ -8,9 +10,14 @@ const participantUrl = (name: string, fallback: string): string => {
   return value && value.length > 0 ? value : fallback;
 };
 
+const participant1Url = participantUrl("SHADOWDESK_PARTICIPANT1_URL", "http://127.0.0.1:6864");
+const participant2Fallback = process.env.SHADOWDESK_NETWORK === "devnet"
+  ? participant1Url
+  : "http://127.0.0.1:18003";
+
 export const PARTICIPANTS: Record<string, ParticipantEndpoint> = {
-  participant1: { name: "participant1", jsonApi: participantUrl("SHADOWDESK_PARTICIPANT1_URL", "http://127.0.0.1:6864") },
-  participant2: { name: "participant2", jsonApi: participantUrl("SHADOWDESK_PARTICIPANT2_URL", "http://127.0.0.1:18003") },
+  participant1: { name: "participant1", jsonApi: participant1Url },
+  participant2: { name: "participant2", jsonApi: participantUrl("SHADOWDESK_PARTICIPANT2_URL", participant2Fallback) },
 };
 
 interface CreatedRecord {
@@ -34,10 +41,12 @@ export class CantonClient {
   }
 
   async req(path: string, init?: RequestInit): Promise<JsonMap> {
+    const auth = await getCantonAuth();
     const resp = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
+        ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
         ...(init?.headers ?? {}),
       },
       cache: "no-store",
