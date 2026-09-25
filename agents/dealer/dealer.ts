@@ -31,7 +31,8 @@ export class DealerAgent {
 
   constructor(baseUrl: string, participantName: string, dealerPartyHint: string, policy: PricingPolicy) {
     this.dealerPartyHint = dealerPartyHint;
-    this.client = new CantonClient(baseUrl, participantName, `shadowdesk-dealer-${dealerPartyHint}`);
+    const userId = process.env.SHADOWDESK_LEDGER_USER_ID ?? `shadowdesk-dealer-${dealerPartyHint}`;
+    this.client = new CantonClient(baseUrl, participantName, userId);
     this.pricing = policy;
   }
 
