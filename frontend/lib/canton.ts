@@ -1,4 +1,4 @@
-import { getCantonAuth } from "@/lib/canton-auth";
+import { CantonAuthError, getCantonAuth } from "@/lib/canton-auth";
 
 export interface ParticipantEndpoint {
   name: string;
@@ -71,6 +71,21 @@ export class CantonClient {
       return typeof j.version === "string";
     } catch {
       return false;
+    }
+  }
+
+  async verifyLedgerIdentity(): Promise<void> {
+    try {
+      await this.req("/v2/version");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/\b(401|403)\b/.test(message)) {
+        throw new CantonAuthError(
+          "configuration",
+          "The Canton Ledger API rejected this identity. Confirm the account is onboarded to the HackCanton participant and that its ledger user ID matches the signed-in identity.",
+        );
+      }
+      throw err;
     }
   }
 
