@@ -32,6 +32,21 @@ export interface DashboardState {
   };
 }
 
+export interface AuthUser {
+  sub: string;
+  email?: string;
+  name?: string;
+  preferredUsername?: string;
+}
+
+export interface AuthStatus {
+  mode: "localnet" | "devnet";
+  authenticated: boolean;
+  user: AuthUser | null;
+  source?: "wallet" | "environment" | "localnet";
+  reason?: "expired" | "configuration";
+}
+
 export interface StreamLine {
   line?: string;
   done?: boolean;
