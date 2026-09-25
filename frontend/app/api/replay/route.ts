@@ -8,6 +8,13 @@ let running = false;
 const ASSET_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
 export async function POST(request: Request) {
+  if (process.env.SHADOWDESK_NETWORK === "devnet") {
+    return Response.json({
+      ok: false,
+      reason: "DevNet RFQ execution is not enabled yet. The current round seeds local demo Asset contracts; registry-backed token settlement must be integrated first.",
+    }, { status: 501 });
+  }
+
   if (running) {
     return new Response(JSON.stringify({ ok: false, reason: "A round is already running." }), {
       status: 409,
