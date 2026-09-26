@@ -80,9 +80,21 @@ runPrivateRfqLifecycle = do
   let awarded = expectSome "Buyer must see the awarded sealed quote" buyerViewOfSealedB
   assertMsg "Awarded quote carries the RFQ selection policy" (awarded.selectionPolicy == LowestPriceThenBidId)
   assertMsg "Awarded quote records the winning bid id" (awarded.bidId == "BID-B-1")
+  assertMsg "Awarded quote records the request reference" (awarded.rfqReference == "RFQ-0001")
+  assertMsg "Awarded quote records the request max price" (awarded.maxPrice == 101.0)
+  assertMsg "Awarded quote records the invited dealers" (awarded.invitedDealers == [dealerA, dealerB])
 
-  submit buyer do
-    exerciseCmd rfqCid CloseRfq
+  -- Awarding consumes the request, so the RFQ is no longer active.
+  rfqAfterAward <- queryContractId buyer rfqCid
+  assertMsg "Awarded RFQ is no longer an active request" (rfqAfterAward == (None : Optional BlockTradeRFQ))
+
+  -- The losing proposal survives but can no longer be awarded.
+  submitMustFail buyer do
+    exerciseCmd proposalACid AcceptProposal with
+      maxPrice = 101.0
+
+  activeSealed <- query @SealedQuote buyer
+  assertMsg "Exactly one award exists after a second acceptance attempt" (length activeSealed == 1)
 
 runAuthorizationAndReplayBoundaries : Script ()
 runAuthorizationAndReplayBoundaries = do
@@ -499,6 +511,70 @@ runDealMustMatchAward = do
   survivingBond <- queryContractId dealerA bondCid
   assertMsg "Payment asset survives a rejected settlement" (survivingCash /= None)
   assertMsg "Security asset survives a rejected settlement" (survivingBond /= None)
+
+runRfqIsAwardedAtMostOnce : Script ()
+runRfqIsAwardedAtMostOnce = do
+  buyer <- allocateParty "buyer"
+  dealerA <- allocateParty "dealerA"
+  dealerB <- allocateParty "dealerB"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+
+  rfqCid <- submit buyer do
+    createCmd (rfqTemplate buyer [dealerA, dealerB] expiry "RFQ-SINGLEAWARD")
+
+  proposalACid <- submit dealerA do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerA
+      offeredPrice = 100.50
+      bidId = "BID-SA-A"
+
+  proposalBCid <- submit dealerB do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerB
+      offeredPrice = 100.20
+      bidId = "BID-SA-B"
+
+  sealedCid <- submit buyer do
+    exerciseCmd proposalBCid AcceptProposal with
+      maxPrice = 101.0
+
+  -- The award consumes the request.
+  consumed <- queryContractId buyer rfqCid
+  assertMsg "Awarded RFQ is no longer active" (consumed == (None : Optional BlockTradeRFQ))
+
+  activeRfqs <- query @BlockTradeRFQ buyer
+  assertMsg "Buyer holds no active RFQ after the award" (length activeRfqs == 0)
+
+  -- No second award can be created from the losing proposal.
+  submitMustFail buyer do
+    exerciseCmd proposalACid AcceptProposal with
+      maxPrice = 101.0
+
+  -- Nor can the award be replayed on the winning proposal.
+  submitMustFail buyer do
+    exerciseCmd proposalBCid AcceptProposal with
+      maxPrice = 101.0
+
+  -- The request cannot be closed after it has already been awarded.
+  submitMustFail buyer do
+    exerciseCmd rfqCid CloseRfq
+
+  -- A late dealer cannot add a proposal to an awarded request.
+  submitMustFail dealerA do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealerA
+      offeredPrice = 99.00
+      bidId = "BID-SA-LATE"
+
+  awards <- query @SealedQuote buyer
+  assertMsg "Exactly one award exists for the RFQ" (length awards == 1)
+
+  case awards of
+    [(_, onlyAward)] ->
+      assertMsg "The single award is the winning bid" (onlyAward.bidId == "BID-SA-B")
+    _ -> error "Exactly one award must exist for the RFQ"
 
 noop : Script ()
 noop = pure ()
