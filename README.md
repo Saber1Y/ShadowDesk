@@ -96,8 +96,10 @@ The shared-node guide grants the ledger user `CanActAs` and `CanReadAs` on parti
 The legacy `SHADOWDESK_CANTON_ACCESS_TOKEN` and `SHADOWDESK_CANTON_REFRESH_TOKEN` variables remain supported for non-browser tooling, but the dashboard should use the wallet login flow.
 When one of them is configured, the header shows a server-token badge instead of a sign-out control, because that credential belongs to the deployment rather than to the browser session.
 
-DevNet RFQ execution is intentionally disabled until the demo's locally seeded `ShadowDesk.Asset` contracts are replaced with real registry-backed token holdings and settlement.
-The authenticated DevNet status view can read the configured party projections in the meantime.
+A DevNet round is gated on a signed-in session and a configured party for each role, not on a hard disable.
+It settles the same locally seeded `ShadowDesk.Asset` contracts as the local round, so it is not a registry-backed settlement.
+Command submission additionally requires the active `shadowdesk-rfq` package to be vetted by the shared node's validator; an uploaded but unvetted package is rejected.
+The authenticated DevNet status view can read the configured party projections.
 
 ## What happens during the agents demo
 
