@@ -103,7 +103,38 @@ const main = async (): Promise<void> => {
     .find((e: any) => e.templateId.endsWith(":ShadowDesk.Rfq:SealedQuote"));
   if (!sealedEvent) throw new Error("no sealed quote");
   const sealedCid: string = sealedEvent.contractId;
-  console.log(`[e2e] sealed quote policy=${sealedEvent.createArgument.selectionPolicy}`);
+  if (sealedEvent.createArgument.rfqReference !== spec.reference) {
+    throw new Error(
+      `Award records request ${sealedEvent.createArgument.rfqReference}, expected ${spec.reference}`,
+    );
+  }
+  if (Number(sealedEvent.createArgument.maxPrice) !== spec.maxPrice) {
+    throw new Error(
+      `Award records max price ${sealedEvent.createArgument.maxPrice}, expected ${spec.maxPrice}`,
+    );
+  }
+  console.log(
+    `[e2e] sealed quote policy=${sealedEvent.createArgument.selectionPolicy} ref=${sealedEvent.createArgument.rfqReference} maxPrice=${sealedEvent.createArgument.maxPrice} invited=${sealedEvent.createArgument.invitedDealers?.length}`,
+  );
+
+  let secondAwardRejected = false;
+  try {
+    await client.exercise(
+      "QuoteProposal",
+      proposalCid,
+      "AcceptProposal",
+      { maxPrice: String(spec.maxPrice) },
+      [buyerParty],
+      `e2e-second-award-${now}`,
+    );
+  } catch (e) {
+    secondAwardRejected = true;
+    console.log(`[e2e] second award rejected: ${String(e).split("\n")[0].slice(0, 110)}`);
+  }
+  if (!secondAwardRejected) throw new Error("ledger accepted a second award for the same RFQ");
+
+  const awards = await client.queryActiveContracts(buyerParty, ["ShadowDesk.Rfq:SealedQuote"], await client.ledgerEnd());
+  if (awards.length !== 1) throw new Error(`expected exactly one award, found ${awards.length}`);
 
   const { receiptCid, receipt } = await settleDeal(client, {
     reference: `DEAL-E2E-${now}`,
