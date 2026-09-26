@@ -142,7 +142,12 @@ export class CantonClient {
 
 export const shortCid = (cid: string): string => cid.slice(0, 16);
 export const templateSuffix = (templateId: string): string => templateId.split(":").slice(1).join(":");
-export const partyHint = (party: string): string => party.split("::")[0];
+const NAMESPACE_UUID = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}-?|[0-9a-fA-F]{8}-)/;
+
+export const partyHint = (party: string): string => {
+  const namespace = party.split("::")[0];
+  return namespace.replace(NAMESPACE_UUID, "");
+};
 export const fmtTime = (iso: string): string => {
   if (!iso) return "-";
   return new Date(iso).toISOString().slice(0, 19).replace("T", " ");
