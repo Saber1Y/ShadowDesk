@@ -5,7 +5,17 @@ export PATH="$HOME/.dpm/bin:$PATH"
 
 ROOT="/Users/mac/codes/Shadow Desk"
 LOG_DIR="$ROOT/log/distributed"
-DAR="$ROOT/daml/.daml/dist/shadowdesk-rfq-1.0.0.dar"
+
+# Resolve the DAR from the package version so a version bump cannot leave this
+# script pointing at a build that no longer exists.
+PKG_NAME="$(awk '/^name:/{print $2; exit}' "$ROOT/daml/daml.yaml")"
+PKG_VERSION="$(awk '/^version:/{print $2; exit}' "$ROOT/daml/daml.yaml")"
+DAR="$ROOT/daml/.daml/dist/${PKG_NAME}-${PKG_VERSION}.dar"
+
+if [ ! -f "$DAR" ]; then
+  echo "!! missing $DAR - build it first with: (cd \"$ROOT/daml\" && dpm build)"
+  exit 1
+fi
 
 echo "==> killing any running sandbox"
 pkill -9 -f "canton-open-source" 2>/dev/null || true
