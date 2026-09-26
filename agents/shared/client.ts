@@ -13,16 +13,21 @@ const subjectFromToken = (token: string | undefined): string | undefined => {
   }
 };
 
+export const envValue = (name: string): string | undefined => {
+  const value = process.env[name];
+  return value && value.length > 0 ? value : undefined;
+};
+
 export class CantonClient {
   readonly baseUrl: string;
   readonly participantName: string;
   readonly userId: string;
 
-  constructor(baseUrl: string, participantName: string, userId = process.env.SHADOWDESK_LEDGER_USER_ID ?? "shadowdesk-agent") {
+  constructor(baseUrl: string, participantName: string, userId = envValue("SHADOWDESK_LEDGER_USER_ID") ?? "shadowdesk-agent") {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.participantName = participantName;
     if (process.env.SHADOWDESK_NETWORK === "devnet") {
-      const ledgerUserId = process.env.SHADOWDESK_LEDGER_USER_ID ?? subjectFromToken(process.env.SHADOWDESK_CANTON_ACCESS_TOKEN);
+      const ledgerUserId = envValue("SHADOWDESK_LEDGER_USER_ID") ?? subjectFromToken(envValue("SHADOWDESK_CANTON_ACCESS_TOKEN"));
       if (!ledgerUserId) throw new Error("DevNet JWT subject is required as the Ledger API userId.");
       this.userId = ledgerUserId;
     } else {
@@ -32,7 +37,7 @@ export class CantonClient {
 
   private async req(path: string, init?: RequestInit): Promise<any> {
     const accessToken = process.env.SHADOWDESK_NETWORK === "devnet"
-      ? process.env.SHADOWDESK_CANTON_ACCESS_TOKEN
+      ? envValue("SHADOWDESK_CANTON_ACCESS_TOKEN")
       : undefined;
     if (process.env.SHADOWDESK_NETWORK === "devnet" && !accessToken) {
       throw new Error("DevNet requests require SHADOWDESK_CANTON_ACCESS_TOKEN.");
