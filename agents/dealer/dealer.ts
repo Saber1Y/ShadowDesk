@@ -1,4 +1,4 @@
-import { CantonClient } from "../shared/client.js";
+import { CantonClient, envValue } from "../shared/client.js";
 import { TPL, type BlockTradeRFQ, type Asset } from "../shared/types.js";
 import { CTBILL, type AssetIdSpec } from "../shared/config.js";
 
@@ -31,7 +31,7 @@ export class DealerAgent {
 
   constructor(baseUrl: string, participantName: string, dealerPartyHint: string, policy: PricingPolicy) {
     this.dealerPartyHint = dealerPartyHint;
-    const userId = process.env.SHADOWDESK_LEDGER_USER_ID ?? `shadowdesk-dealer-${dealerPartyHint}`;
+    const userId = envValue("SHADOWDESK_LEDGER_USER_ID") ?? `shadowdesk-dealer-${dealerPartyHint}`;
     this.client = new CantonClient(baseUrl, participantName, userId);
     this.pricing = policy;
   }
