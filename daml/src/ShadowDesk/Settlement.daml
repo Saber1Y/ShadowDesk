@@ -1,6 +1,7 @@
 module ShadowDesk.Settlement where
 
 import ShadowDesk.Asset
+import ShadowDesk.Rfq
 
 template Deal
   with
@@ -13,6 +14,7 @@ template Deal
     settlementAsset : AssetId
     paymentCid : ContractId Asset
     securityCid : ContractId Asset
+    sealedQuote : ContractId SealedQuote
     expiry : Time
   where
     signatory buyer, dealer
@@ -21,9 +23,17 @@ template Deal
       controller buyer, dealer
       do
         now <- getTime
+        assertMsg "Deal has expired" (this.expiry > now)
+        award <- fetch this.sealedQuote
+        assertMsg "Deal buyer must match the awarded quote" (award.buyer == this.buyer)
+        assertMsg "Deal dealer must match the awarded quote" (award.dealer == this.dealer)
+        assertMsg "Deal price must match the awarded quote" (award.offeredPrice == this.unitPrice)
+        assertMsg "Deal quantity must match the awarded quote" (award.amount == this.quantity)
+        assertMsg "Deal security must match the awarded quote" (award.assetToBuy == this.security.symbol)
+        assertMsg "Deal settlement asset must match the awarded quote"
+          (award.settlementAsset == this.settlementAsset.symbol)
         payment <- exercise paymentCid Read
         lockedSecurity <- exercise securityCid Read
-        assertMsg "Deal has expired" (this.expiry > now)
         assertMsg "Security amount must match the deal" (lockedSecurity.quantity == this.quantity)
         assertMsg "Settlement asset mismatch" (payment.id == this.settlementAsset)
         assertMsg "Payment must cover deal value" (payment.quantity >= this.quantity * this.unitPrice)
@@ -47,6 +57,10 @@ template Deal
           quantity = this.quantity
           unitPrice = this.unitPrice
           totalValue = this.quantity * this.unitPrice
+          rfq = award.rfq
+          sealedQuote = this.sealedQuote
+          bidId = award.bidId
+          selectionPolicy = award.selectionPolicy
           settledAt = now
 
 template SettlementReceipt
@@ -58,6 +72,10 @@ template SettlementReceipt
     quantity : Decimal
     unitPrice : Decimal
     totalValue : Decimal
+    rfq : ContractId BlockTradeRFQ
+    sealedQuote : ContractId SealedQuote
+    bidId : Text
+    selectionPolicy : SelectionPolicy
     settledAt : Time
   where
     signatory buyer
