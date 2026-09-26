@@ -15,7 +15,7 @@ An institutional fund wants to buy a large block of an asset without moving the 
 1. The **buyer agent** creates a `BlockTradeRFQ` for a block size, a max price, a list of invited dealers, and the award rule to apply.
 2. Each **dealer agent** submits one `QuoteProposal` with its own price and bid id. A dealer sees only its own proposals, never the others.
 3. When the buyer's collection window closes, the buyer agent picks the deterministic winner using the rule the RFQ declared: lowest price within the max-price limit, ties broken by bid id.
-4. The buyer `AcceptProposal`s the winning quote into a `SealedQuote` - now binding on both parties, and carrying the rule it was awarded under.
+4. The buyer `AcceptProposal`s the winning quote into a `SealedQuote` - now binding on both parties, and carrying the rule it was awarded under. Awarding consumes the RFQ, so a request can be awarded at most once; a second or concurrent acceptance cannot resolve the RFQ and fails. Because the RFQ is then gone from the active contract set, the sealed quote also records the request's reference, max price, and invited dealers so the awarded round stays fully reconstructable.
 5. Both parties authorize the `Deal` against that `SealedQuote`, then `Settle` runs DvP atomically: the buyer's locked security becomes the buyer's, and the dealer's payment asset becomes the dealer's. The ledger rejects any `Deal` that does not match the awarded quote, and a `SettlementReceipt` records the trade together with the RFQ, winning bid id, and selection policy.
 
 Each step's authorization and visibility is enforced by the Daml contract templates, not by the agents.
@@ -112,7 +112,8 @@ The authenticated DevNet status view can read the configured party projections i
 - The venue selects dealerA deterministically (lowest price within the limit).
 - The winning quote is sealed; the losing dealer on participant2 sees 0 of the winner's quotes (programmatically asserted).
 - `Deal` is created and `Settle` runs atomically on participant1: buyer holds 1,000,000 cTBILL, dealerA holds 100,200,000 cUSDC. A `SettlementReceipt` is written.
-- The `Deal` must reference the awarded `SealedQuote`. The ledger rejects any settlement whose dealer, price, size, or instruments differ from the award, and the receipt records the originating RFQ, the winning bid id, and the selection policy.
+- **The `Deal` must reference the awarded `SealedQuote`.** The ledger rejects any settlement whose dealer, price, size, or instruments differ from the award, and the receipt records the originating RFQ, the winning bid id, and the selection policy.
+- A request is awarded at most once. The buyer panel shows `AWARDED` rather than `OPEN` afterwards, because the RFQ is consumed by the award.
 
 To test a custom round from the UI, set the security and settlement instruments, enter a positive amount, and enter a positive maximum price before selecting **Run round**.
 Dealer prices in the local demo are fixed at 100.20 and 100.50, so a maximum price below 100.20 intentionally produces no eligible quote.
@@ -145,6 +146,7 @@ For a repeatable API/UI smoke check without resetting the ledger, run `./scripts
 - **Local single-synchronizer federation.** The demo runs two participants on one local synchronizer. Cross-synchronizer (DevNet) operation is the next milestone.
 - **Settlement party topology.** Cross-participant `actAs` submission is rejected by the script runner, so the winning dealer in the demo is co-hosted on participant1 where the `Deal`/`Settle` executes. Quote secrecy across participants is unaffected and is proven independently.
 - **Fixed selection policy.** Each RFQ declares its award rule on-ledger (`LowestPriceThenBidId`). The buyer agent ranks proposals with that same rule, and the settlement receipt records which rule and bid id produced the award. The ranking itself still runs client-side, because Daml cannot enumerate every proposal contract to compute a global minimum. Additional policies and bilateral negotiation are future extensions.
+- **Buyer is the awarder.** The contract enforces that an award matches a real dealer-signed proposal and that a request yields at most one award, but it does not check that the buyer picked the *cheapest* quote. Enforcing the global minimum would need the ledger to see all proposals at once, which the current authorization model does not allow.
 
 ## Submission pack
 
