@@ -73,8 +73,14 @@ template QuoteProposal
         assertMsg "Quote proposal has expired" (currentTime < this.expiry)
         assertMsg "RFQ buyer mismatch" (rfqRef.buyer == buyer)
         assertMsg "Offered price exceeds buyer max price" (this.offeredPrice <= maxPrice)
+        -- Consume the request so it can be awarded exactly once. A second
+        -- acceptance, or a concurrent one, can no longer fetch the RFQ.
+        archive this.rfq
         create SealedQuote with
           rfq = this.rfq
+          rfqReference = rfqRef.reference
+          maxPrice = rfqRef.maxPrice
+          invitedDealers = rfqRef.dealers
           buyer = this.buyer
           dealer = this.dealer
           assetToBuy = this.assetToBuy
@@ -93,6 +99,9 @@ template QuoteProposal
 template SealedQuote
   with
     rfq : ContractId BlockTradeRFQ
+    rfqReference : Text
+    maxPrice : Decimal
+    invitedDealers : [Party]
     buyer : Party
     dealer : Party
     assetToBuy : Text
