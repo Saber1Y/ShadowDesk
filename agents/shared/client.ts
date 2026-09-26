@@ -1,4 +1,4 @@
-import { TPL, type TemplateKey, type Party, type CreatedEvent, type TransactionResponse } from "./types.js";
+import { TPL, PACKAGE_ID, type TemplateKey, type Party, type CreatedEvent, type TransactionResponse } from "./types.js";
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
@@ -72,6 +72,7 @@ export class CantonClient {
         userId: this.userId,
         actAs: cmd.actAs,
         ...(cmd.readAs ? { readAs: cmd.readAs } : {}),
+        packageIdSelectionPreference: cmd.packageIdSelectionPreference ?? [PACKAGE_ID],
       },
     };
     return this.req("/v2/commands/submit-and-wait-for-transaction", {
@@ -83,6 +84,11 @@ export class CantonClient {
   async ledgerEnd(): Promise<number> {
     const j = await this.req("/v2/state/ledger-end");
     return j.offset as number;
+  }
+
+  async packageIds(): Promise<string[]> {
+    const j = await this.req("/v2/packages");
+    return (j.packageIds ?? []) as string[];
   }
 
   async listParties(): Promise<Party[]> {
