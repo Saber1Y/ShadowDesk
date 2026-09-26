@@ -1,7 +1,9 @@
 export const PACKAGE_NAME = "shadowdesk-rfq";
-export const PACKAGE_ID = "6cf7d6a6d9ab600cdbafed0c0623207aa15e0a234ccb911359d8d925468d8646";
+export const PACKAGE_ID = "0450b46f9ccfaab4fc4730394d7dc38ba36a379827a16881b82c7431b677f979";
 
 export type Party = string;
+
+export type SelectionPolicy = "LowestPriceThenBidId";
 
 export interface AssetId {
   issuer: string;
@@ -15,6 +17,7 @@ export interface BlockTradeRFQ {
   settlementAsset: string;
   amount: string;
   maxPrice: string;
+  selectionPolicy: SelectionPolicy;
   reference: string;
   expiry: string;
 }
@@ -40,6 +43,7 @@ export interface SealedQuote {
   amount: string;
   offeredPrice: string;
   bidId: string;
+  selectionPolicy: SelectionPolicy;
   expiry: string;
 }
 
@@ -60,6 +64,7 @@ export interface Deal {
   settlementAsset: AssetId;
   paymentCid: string;
   securityCid: string;
+  sealedQuote: string;
   expiry: string;
 }
 
@@ -71,6 +76,10 @@ export interface SettlementReceipt {
   quantity: string;
   unitPrice: string;
   totalValue: string;
+  rfq: string;
+  sealedQuote: string;
+  bidId: string;
+  selectionPolicy: SelectionPolicy;
   settledAt: string;
 }
 
