@@ -1,6 +1,8 @@
 import { CantonClient, envValue } from "../shared/client.js";
-import { TPL, type BlockTradeRFQ, type QuoteProposal, type Asset } from "../shared/types.js";
+import { TPL, type BlockTradeRFQ, type QuoteProposal, type Asset, type SelectionPolicy } from "../shared/types.js";
 import { CTBILL, CUSDC, type AssetIdSpec } from "../shared/config.js";
+
+export const SELECTION_POLICY: SelectionPolicy = "LowestPriceThenBidId";
 
 export interface RfqSpec {
   reference: string;
@@ -110,6 +112,7 @@ export class BuyerAgent {
         settlementAsset: spec.settlementAsset.symbol,
         amount: String(spec.amount),
         maxPrice: String(spec.maxPrice),
+        selectionPolicy: SELECTION_POLICY,
         reference: spec.reference,
         expiry: spec.expiry,
       },
