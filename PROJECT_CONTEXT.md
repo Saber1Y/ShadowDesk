@@ -10,14 +10,14 @@ Read this file before changing architecture, contract visibility, settlement log
 
 - Repository state: git repo initialized at workspace root (branch `main`, remote origin `https://github.com/Saber1Y/ShadowDesk`), Daml package scaffolded at `/Users/mac/codes/Shadow Desk/daml`, TypeScript agents in `agents/`, Next.js dashboard in `frontend/`; runtime artifacts (node_modules, .daml, log/, .next) gitignored. History committed per logical file/unit; dashboard rebranded to the official Canton palette (yellow `#F3FF97`, black `#030206`, white `#FFFFFC`, lilac `#D5A5E3`, purple `#875CFF`, taupe `#A89F91`) with a segmented C-ring mark + `app/icon.svg` favicon.
 - Implementation state: privacy templates compiling, agent services live, dashboard live.
-- Daml state: package `shadowdesk-rfq` 1.1.0 builds to `.daml/dist/shadowdesk-rfq-1.1.0.dar` (package id `0450b46f9ccfaab4fc4730394d7dc38ba36a379827a16881b82c7431b677f979`); eight daml-script tests pass via `dpm test` (seven scenarios plus `noop`).
+- Daml state: package `shadowdesk-rfq` 1.1.0 builds to `.daml/dist/shadowdesk-rfq-1.1.0.dar` (package id `f3655cf47a0095fdaf023f303b3657b529a7f38de44b2d39330cad6a273d0a5f`); nine daml-script tests pass via `dpm test` (eight scenarios plus `noop`).
 - Canton state: local Canton 3.5.17 sandbox validated. `dpm sandbox` starts a full single-process network; Ledger API gRPC on 127.0.0.1:6865, HTTP on 6864. Party store persists per-node between runs; readiness must be keyed on the log line `Canton sandbox is ready.`, not on the port.
 - Multi-participant state: `dpm sandbox -c daml/distributed-run.conf` brings up a second participant `participant2` (Ledger API gRPC 18001, admin 18002, HTTP 18003) on the same synchronizer, auto-connected. Cross-participant privacy and settlement proven live via `participants.json`/`participants-p2.json` runner configs (default participant hosts the DAR upload; `--upload-dar=true` uploads only to the default participant, so DAR must be uploaded once per participant).
 - Agent state: buyer/dealer/dealer agent services scaffolded in `/Users/mac/codes/Shadow Desk/agents` (TypeScript + Node, JSON Ledger API v2). Waits proven live end-to-end across both participants: buyer creates RFQ, both dealers quote from their own participant, buyer deterministically selects the winner within maxPrice, seals the quote, and DvP settles atomically on participant1. The losing dealer on participant2 sees zero of the winner's quotes (asserted in the demo run).
 - Frontend state: Next.js 15 (App Router, Tailwind v4, Motion, lucide) dashboard in `/Users/mac/codes/Shadow Desk/frontend`. Live command-center console UI: floating pill nav, dot-grid dark studio, lime accent, mono micro-labels. Two tabs: Public projection (sanitized execution-ledger metadata + cross-participant privacy banner) and Institutional (buyer view: holdings, live RFQ, independent quotes with sealed/lost states, settled DvP receipt). A "Run round" button streams the real two-participant agent run into a terminal console and the projections update live from actual ledger queries. Server-side projections read the JSON API on both participants; the browser never touches a participant directly.
 - Settlement state: two-leg atomic DvP implemented. `Deal` template (signatory buyer+dealer) with `Settle` choice performs validated payment-for-security exchange in one transaction; `SettlementReceipt` issued. Guards: expiry, exact security quantity, settlement-asset match, payment coverage, and agreement with the awarded `SealedQuote` (buyer, dealer, price, size, and both instruments). Both legs verify from ledger results in tests. The receipt records the originating RFQ, the sealed quote, the winning bid id, and the selection policy, so the award is traceable on-ledger.
-- Selection state: each `BlockTradeRFQ` declares a `SelectionPolicy` (`LowestPriceThenBidId`) that the sealed quote inherits. The buyer agent still ranks proposals client-side, because Daml cannot enumerate every proposal contract to compute a global minimum, and the ledger enforces only that settlement matches the award. The contract does not yet prevent a buyer from accepting more than one proposal for the same RFQ; archiving the RFQ on the first award is the intended fix.
-- Deployment state: package `shadowdesk-rfq` 1.1.0 is built and verified against a local Canton 3.5.17 sandbox via `npm run e2e:award-chain` in `agents/`; it is not yet uploaded to the live sandbox or DevNet. DevNet upload of the new DAR is a manual step. The previous 1.0.0 build was uploaded to the live local sandbox (main package id `f719639eab2b84e28af4f175ad4056b24ddb1aefb4c9112bdd86f759ab94a5b8` at session end; earlier build was `863466b59a887f46b38f58485e6ff7540a93453bb9d052b2586da81795d9b07a`).
+- Selection state: each `BlockTradeRFQ` declares a `SelectionPolicy` (`LowestPriceThenBidId`) that the sealed quote inherits. The buyer agent still ranks proposals client-side, because Daml cannot enumerate every proposal contract to compute a global minimum, and the ledger enforces only that settlement matches the award. A request is awarded at most once: `AcceptProposal` consumes the RFQ, so a second or concurrent acceptance can no longer resolve it. The sealed quote therefore also records the request's reference, max price, and invited dealers, which keeps the awarded round reconstructable after the RFQ is archived and lets the dashboard show it as `AWARDED` instead of `OPEN`. The ledger does not check that the buyer chose the cheapest quote; that remains a buyer-side duty.
+- Deployment state: package `shadowdesk-rfq` 1.1.0 is built and verified against a local Canton 3.5.17 sandbox via `npm run e2e:award-chain` in `agents/`, and a full two-participant demo round completed on it. It is not yet uploaded to DevNet. DevNet upload of the new DAR is a manual step. `scripts/localnet/run-demo.sh` now resolves the DAR path from the version in `daml/daml.yaml` instead of hardcoding it, so a version bump no longer breaks the bootstrap. The previous 1.0.0 build was uploaded to the live local sandbox (main package id `f719639eab2b84e28af4f175ad4056b24ddb1aefb4c9112bdd86f759ab94a5b8` at session end; earlier build was `863466b59a887f46b38f58485e6ff7540a93453bb9d052b2586da81795d9b07a`).
 - Verification state: all five daml-script scenarios executed successfully against the live sandbox Ledger API via `dpm script` with party allocation, DvP settlement, and fraud-rejection on real transactions. Multi-participant privacy and settlement scenario also executed successfully against a live two-participant sandbox. The 1.1.0 award chain was additionally verified against a real single-node sandbox Ledger API through the JSON API.
 - Planning state: product concept, MVP requirements, and phase plan are documented.
 
@@ -653,28 +653,46 @@ Files added or changed:
 - `README.md`: award rule, award-bound settlement, and the new check.
 
 Commands run and results:
-- `cd daml && dpm test`: eight scenarios pass, exit 0.
+- `cd daml && dpm test`: eight scenarios pass, exit 0. A ninth scenario, `runRfqIsAwardedAtMostOnce`, was added later in the same session; see below.
 - `cd agents && npm run typecheck`, `cd frontend && npm run typecheck`, `cd frontend && npm run build`: pass.
-- `cd daml && dpm build`: `.daml/dist/shadowdesk-rfq-1.1.0.dar`, package id `0450b46f9ccfaab4fc4730394d7dc38ba36a379827a16881b82c7431b677f979`.
+- `cd daml && dpm build`: `.daml/dist/shadowdesk-rfq-1.1.0.dar`, package id `0450b46f9ccfaab4fc4730394d7dc38ba36a379827a16881b82c7431b677f979` at this point in the session.
 - `cd agents && npm run e2e:award-chain` against `dpm sandbox` (Canton 3.5.17, JSON API 6864): the ledger round-trips `SelectionPolicy` as the JSON string `"LowestPriceThenBidId"`, the award-to-receipt chain resolves, a mismatched `Deal` is rejected, and the security asset is untouched afterwards. The check also asserts the ledger serves the pinned `PACKAGE_ID`, so a stale id fails loudly.
 
+### Session 2026-09-26 (second): Awarding Consumes the RFQ
+
+Date: 2026-09-26.
+
+Files added or changed:
+- `daml/src/ShadowDesk/Rfq.daml`: `AcceptProposal` now archives the RFQ after the asserts pass, so a request can be awarded at most once. `SealedQuote` gained `rfqReference`, `maxPrice`, and `invitedDealers` so the award stays a self-describing record of the request it answered.
+- `daml/src/ShadowDesk/Test.daml`: added `runRfqIsAwardedAtMostOnce`, which awards one of two proposals and then shows the RFQ is archived, the losing proposal cannot be awarded, the award cannot be replayed, `CloseRfq` no longer applies, a late dealer cannot add a proposal, and exactly one award exists. The privacy lifecycle no longer closes the RFQ after the award, because the award already consumed it.
+- `agents/shared/types.ts`, `agents/e2e/award-chain-check.ts`: the new award fields on the wire, plus a real-ledger second-award rejection and an assertion that exactly one award exists.
+- `frontend/lib/state.ts`: an awarded RFQ is reconstructed from the surviving `SealedQuote`, so the buyer's last round does not vanish from the Institutional view; proposal `rfqRef` falls back to the award; the public projection counts and emits `RFQ_CREATED` for an awarded-then-archived request.
+- `frontend/lib/types.ts`, `frontend/components/views/InstitutionalView.tsx`: RFQ rows carry `awarded`, and the panel reads `Awarded RFQ` / `AWARDED` once consumed instead of claiming `OPEN`.
+- `scripts/localnet/run-demo.sh`: resolve the DAR from the version in `daml/daml.yaml` and fail with a build hint if it is missing.
+
+Commands run and results:
+- `cd daml && dpm test`: nine scenarios pass, exit 0.
+- `cd daml && dpm build`: package id `f3655cf47a0095fdaf023f303b3657b529a7f38de44b2d39330cad6a273d0a5f`.
+- `cd agents && npm run e2e:award-chain`: the ledger rejects the second award, exactly one award exists, the award records the request reference, max price, and invited dealer count, settlement still succeeds, and a mismatched deal is still rejected with the security untouched.
+- `./scripts/localnet/run-demo.sh`: two-participant sandbox ready in 16s, DAR uploaded to both participants, full demo round completed with dealerA winning at 100.2, receipt value 100200000, losing dealer seeing 0 of the winner's quotes.
+- Dashboard verified against that ledger in localnet mode: public counts `{rfqs: 1, proposals: 2, sealed: 1, deals: 0, receipts: 1, assets: 1}`, the single RFQ row reconstructed with `awarded: true` and the correct reference, both proposals resolving `rfqRef` to the awarded request, and the privacy banner still reporting the losing dealer sees 0 winner quotes.
+
 Decisions made:
-- The RFQ now carries the rule that produced the award, so the selection policy is auditable on-ledger rather than implied by the buyer agent.
-- `SealedQuote.AcceptQuote` was deleted rather than kept. It asserted four conditions and then archived the quote, which made the award a consumable placeholder and left the pre-existing gap that a settled `Deal` could never prove which quote it was honouring.
-- The deal's agreement with its award is enforced on-ledger in `Settle` rather than only in the agent, so a drifting client cannot settle against different terms.
+- Single-award enforcement consumes the RFQ rather than relying on contract keys, which need LF 2.3 and are rejected by this toolchain. Archiving inside `AcceptProposal` also closes concurrent acceptance, because only one transaction can archive the contract.
+- The asserts stay ahead of the archive, so a rejected acceptance (for example an over-limit price) leaves the request open.
+- The award became the durable description of the request. This was not optional: once the RFQ is archived, no surviving active contract carries its reference, max price, or dealer list, so the dashboard could not otherwise render the awarded round.
+- The move to a consuming `AcceptProposal` on the RFQ was rejected. It would enforce one award too, but it would let the buyer pass arbitrary price and dealer as choice arguments, so the price would no longer be backed by the dealer's signature on the proposal.
 
 Known failures and limits:
-- Contract keys remain unavailable: the compiler reports `Contract Keys not supported on current lf version (2.2), feature supported in from 2.3`, and `language-version: 2.3` is ignored by this toolchain with no `dpm` override. This is why there is no contract-key uniqueness guard.
-- The ledger still permits a buyer to accept more than one proposal for the same RFQ, so more than one award, and more than one settlement, can exist for one request. Archiving the RFQ inside the successful `AcceptProposal` is the intended fix and is not yet implemented.
-- Proposal ranking stays client-side; Daml cannot enumerate all proposal contracts to compute a global minimum.
-- The e2e check runs on a single node with one party acting as both buyer and dealer, so it proves encoding and the award invariant, not cross-participant privacy. Cross-participant privacy still rests on the daml-script scenarios and the earlier live run.
-- Package 1.1.0 is not uploaded to the live sandbox or DevNet. DevNet upload is a manual Console step, and the 1.0.0 contract shapes cannot serve the new fields.
-- The package id depends on the exact Daml source bytes: a trailing-newline change alone moved it, so the id must be re-read from the DAR after any source edit.
+- The ledger cannot verify that the buyer awarded the cheapest eligible quote. It proves the award matches a dealer-signed proposal and that only one exists.
+- Awarding archives the RFQ, so a still-open request can no longer be distinguished from an awarded one in the active contract set; the dashboard reconstructs the distinction from the award.
+- `dpm build` emits a non-blocking `-Wtemplate-interface-depends-on-daml-script` warning because the test module imports `Daml.Script`.
+- The package id depends on exact Daml source bytes, so it must be re-read from the DAR after any source edit. It moved twice in this session.
 
 Next actions:
-1. Implement single-award enforcement by archiving the RFQ on the first successful `AcceptProposal`, add a duplicate-award regression test, and drop the now-redundant `CloseRfq` in the lifecycle test.
-2. Upload `.daml/dist/shadowdesk-rfq-1.1.0.dar` to the live sandbox and DevNet, then rerun the demo and the award-chain check against DevNet.
-3. Keep real-value settlement (CIP-56 `allocate`/`execute` over Splice Amulet) as a separate workstream; it needs a Docker LocalNet plus Amulet and the `splice-token-standard-test` harness, and dealer Amulets that do not exist yet.
+1. Upload `.daml/dist/shadowdesk-rfq-1.1.0.dar` to DevNet and rerun the demo and the award-chain check there.
+2. Keep real-value settlement (CIP-56 `allocate`/`execute` over Splice Amulet) as a separate workstream; it needs a Docker LocalNet plus Amulet and the `splice-token-standard-test` harness, and dealer Amulets that do not exist yet.
+3. Record the walkthrough and submission brief once DevNet is confirmed for the final recording.
 
 ## Open Decisions
 
