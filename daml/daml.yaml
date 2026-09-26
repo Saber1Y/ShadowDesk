@@ -1,6 +1,6 @@
 sdk-version: 3.5.10
 name: shadowdesk-rfq
-version: 1.0.0
+version: 1.1.0
 source: src
 dependencies:
   - daml-prim
