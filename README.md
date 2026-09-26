@@ -12,11 +12,11 @@ An institutional fund wants to buy a large block of an asset without moving the 
 
 ## How it works
 
-1. The **buyer agent** creates a `BlockTradeRFQ` for a block size, a max price, and a list of invited dealers.
+1. The **buyer agent** creates a `BlockTradeRFQ` for a block size, a max price, a list of invited dealers, and the award rule to apply.
 2. Each **dealer agent** submits one `QuoteProposal` with its own price and bid id. A dealer sees only its own proposals, never the others.
-3. When the buyer's collection window closes, the buyer agent picks the deterministic winner: lowest price within the max-price limit, ties broken by bid id.
-4. The buyer `AcceptProposal`s the winning quote into a `SealedQuote` - now binding on both parties.
-5. Both parties authorize the `Deal`, then `Settle` runs DvP atomically: the buyer's locked security becomes the buyer's, and the dealer's payment asset becomes the dealer's. A `SettlementReceipt` records the trade.
+3. When the buyer's collection window closes, the buyer agent picks the deterministic winner using the rule the RFQ declared: lowest price within the max-price limit, ties broken by bid id.
+4. The buyer `AcceptProposal`s the winning quote into a `SealedQuote` - now binding on both parties, and carrying the rule it was awarded under.
+5. Both parties authorize the `Deal` against that `SealedQuote`, then `Settle` runs DvP atomically: the buyer's locked security becomes the buyer's, and the dealer's payment asset becomes the dealer's. The ledger rejects any `Deal` that does not match the awarded quote, and a `SettlementReceipt` records the trade together with the RFQ, winning bid id, and selection policy.
 
 Each step's authorization and visibility is enforced by the Daml contract templates, not by the agents.
 
@@ -112,6 +112,7 @@ The authenticated DevNet status view can read the configured party projections i
 - The venue selects dealerA deterministically (lowest price within the limit).
 - The winning quote is sealed; the losing dealer on participant2 sees 0 of the winner's quotes (programmatically asserted).
 - `Deal` is created and `Settle` runs atomically on participant1: buyer holds 1,000,000 cTBILL, dealerA holds 100,200,000 cUSDC. A `SettlementReceipt` is written.
+- The `Deal` must reference the awarded `SealedQuote`. The ledger rejects any settlement whose dealer, price, size, or instruments differ from the award, and the receipt records the originating RFQ, the winning bid id, and the selection policy.
 
 To test a custom round from the UI, set the security and settlement instruments, enter a positive amount, and enter a positive maximum price before selecting **Run round**.
 Dealer prices in the local demo are fixed at 100.20 and 100.50, so a maximum price below 100.20 intentionally produces no eligible quote.
@@ -124,11 +125,14 @@ The demo asserts, and the dashboard surfaces, a live cross-participant privacy c
 ## Tests and type checks
 
 ```bash
+cd daml && dpm test               # contract scenarios, including award/settlement mismatch
 cd agents && npm run typecheck    # TypeScript strict
 cd agents && npm run demo         # full end-to-end two-participant demo
 cd frontend && npm run typecheck
 cd frontend && npm run build
 ```
+
+`cd agents && npm run e2e:award-chain` exercises the award chain against a real single-node ledger and needs no Docker: start one with `cd daml && dpm sandbox --dar .daml/dist/shadowdesk-rfq-1.1.0.dar`. It creates an RFQ, quotes, seals, settles, and asserts that a `Deal` which disagrees with the awarded quote is rejected without moving the security.
 
 The live UI flow can be checked at `http://localhost:3001` after the localnet bootstrap.
 Verify both participants are live, run a custom RFQ, confirm the requested amount and instruments in the Institutional view, and confirm the privacy result reports zero winner quotes to the losing dealer.
@@ -140,7 +144,7 @@ For a repeatable API/UI smoke check without resetting the ledger, run `./scripts
 - **Demo assets.** The demo settles in-ledger `Asset` contracts (cTBILL / cUSDC) minted for the demo. The DevNet asset standard (NameService / CIP-025-style registries) is not integrated yet; see `docs/pilot-plan.md`.
 - **Local single-synchronizer federation.** The demo runs two participants on one local synchronizer. Cross-synchronizer (DevNet) operation is the next milestone.
 - **Settlement party topology.** Cross-participant `actAs` submission is rejected by the script runner, so the winning dealer in the demo is co-hosted on participant1 where the `Deal`/`Settle` executes. Quote secrecy across participants is unaffected and is proven independently.
-- **Single price selection.** Winners are chosen automatically by lowest price within the buyer's max-price limit; manual negotiation is a future extension.
+- **Fixed selection policy.** Each RFQ declares its award rule on-ledger (`LowestPriceThenBidId`). The buyer agent ranks proposals with that same rule, and the settlement receipt records which rule and bid id produced the award. The ranking itself still runs client-side, because Daml cannot enumerate every proposal contract to compute a global minimum. Additional policies and bilateral negotiation are future extensions.
 
 ## Submission pack
 
