@@ -18,7 +18,7 @@ export interface DashboardState {
   institutional: {
     buyerParty: string | null;
     assets: { holder: string; symbol: string; issuer: string; quantity: string; reference: string; cid: string; at: string }[];
-    rfqs: { reference: string; assetToBuy: string; settlementAsset: string; amount: string; maxPrice: string; expiry: string; dealers: string[]; cid: string; at: string }[];
+    rfqs: { reference: string; assetToBuy: string; settlementAsset: string; amount: string; maxPrice: string; expiry: string; dealers: string[]; cid: string; at: string; awarded: boolean }[];
     proposals: { rfqCid: string; rfqRef: string; dealer: string; offeredPrice: string; bidId: string; cid: string; at: string }[];
     sealedQuotes: { rfqCid: string; dealer: string; offeredPrice: string; bidId: string; cid: string; at: string }[];
     deals: { reference: string; security: string; quantity: string; unitPrice: string; cid: string; at: string }[];
