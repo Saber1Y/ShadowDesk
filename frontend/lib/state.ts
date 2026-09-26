@@ -171,6 +171,25 @@ const projectPublic = (records: RawCreated[]): PublicProjection => {
       payload,
     });
   }
+  // An awarded RFQ is archived, so it is no longer in the active set. Count it
+  // and emit its creation from the surviving award rather than dropping the
+  // request from the public execution history.
+  for (const r of records) {
+    if (r.templateId.split(":").pop() !== "SealedQuote") continue;
+    const a = r.createArgument;
+    if (a?.rfq && !records.some((o) => o.contractId === a.rfq)) {
+      counts.rfqs += 1;
+      events.push({
+        kind: "RFQ_CREATED",
+        template: templateSuffix("BlockTradeRFQ"),
+        ref: (a.rfqReference as string) || shortCid(a.rfq as string),
+        cid: shortCid(a.rfq as string),
+        at: r.createdAt,
+        payload: "METADATA_ONLY",
+      });
+    }
+  }
+  events.sort((a, b) => String(a.at).localeCompare(String(b.at)));
   return { events: events.reverse(), counts };
 };
 
@@ -183,6 +202,35 @@ const projectInstitutional = (buyerParty: string, records: RawCreated[]): Instit
   const deals: any[] = [];
   const receipts: any[] = [];
 
+  // Awarding consumes the RFQ, so an awarded request leaves the active set.
+  // The sealed quote is the surviving record of it, so rebuild those rows
+  // from the award instead of letting the buyer's last round disappear.
+  const rfqByCid = new Map<string, any>();
+  for (const r of records) {
+    if (r.templateId.split(":").pop() !== "BlockTradeRFQ") continue;
+    const a = r.createArgument;
+    rfqByCid.set(r.contractId, {
+      reference: a.reference, assetToBuy: a.assetToBuy, settlementAsset: a.settlementAsset,
+      amount: a.amount, maxPrice: a.maxPrice, expiry: a.expiry,
+      dealers: (a.dealers ?? []).map((d: string) => partyHint(d)),
+      cid: shortCid(r.contractId), at: r.createdAt, awarded: false,
+    });
+  }
+  for (const r of records) {
+    if (r.templateId.split(":").pop() !== "SealedQuote") continue;
+    const a = r.createArgument;
+    const rfqCid = a.rfq as string;
+    if (rfqByCid.has(rfqCid)) continue;
+    rfqByCid.set(rfqCid, {
+      reference: a.rfqReference, assetToBuy: a.assetToBuy, settlementAsset: a.settlementAsset,
+      amount: a.amount, maxPrice: a.maxPrice, expiry: a.expiry,
+      dealers: (a.invitedDealers ?? []).map((d: string) => partyHint(d)),
+      cid: shortCid(rfqCid), at: r.createdAt, awarded: true,
+    });
+  }
+  rfqs.push(...rfqByCid.values());
+  rfqs.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
   for (const r of records) {
     const last = r.templateId.split(":").pop();
     const a = r.createArgument;
@@ -190,16 +238,9 @@ const projectInstitutional = (buyerParty: string, records: RawCreated[]): Instit
       assets.push({
         holder: a.holder, symbol: a.id?.symbol, issuer: a.id?.issuer, quantity: a.quantity, reference: a.reference, cid: shortCid(r.contractId), at: r.createdAt,
       });
-    } else if (last === "BlockTradeRFQ") {
-      rfqs.push({
-        reference: a.reference, assetToBuy: a.assetToBuy, settlementAsset: a.settlementAsset,
-        amount: a.amount, maxPrice: a.maxPrice, expiry: a.expiry,
-        dealers: (a.dealers ?? []).map((d: string) => partyHint(d)),
-        cid: shortCid(r.contractId), at: r.createdAt,
-      });
     } else if (last === "QuoteProposal") {
       proposals.push({
-        rfqCid: a.rfq, rfqRef: byCid.get(a.rfq)?.createArgument?.reference ?? "",
+        rfqCid: a.rfq, rfqRef: byCid.get(a.rfq)?.createArgument?.reference ?? rfqByCid.get(a.rfq)?.reference ?? "",
         dealer: partyHint(a.dealer), offeredPrice: a.offeredPrice, bidId: a.bidId,
         cid: shortCid(r.contractId), at: r.createdAt,
       });
