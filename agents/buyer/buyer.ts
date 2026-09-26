@@ -1,4 +1,4 @@
-import { CantonClient } from "../shared/client.js";
+import { CantonClient, envValue } from "../shared/client.js";
 import { TPL, type BlockTradeRFQ, type QuoteProposal, type Asset } from "../shared/types.js";
 import { CTBILL, CUSDC, type AssetIdSpec } from "../shared/config.js";
 
@@ -58,7 +58,7 @@ export class BuyerAgent {
   buyerParty: string | null = null;
 
   constructor(baseUrl: string, participantName: string) {
-    this.client = new CantonClient(baseUrl, participantName, process.env.SHADOWDESK_LEDGER_USER_ID ?? "shadowdesk-buyer");
+    this.client = new CantonClient(baseUrl, participantName, envValue("SHADOWDESK_LEDGER_USER_ID") ?? "shadowdesk-buyer");
   }
 
   async provision(): Promise<string> {
