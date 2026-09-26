@@ -2,14 +2,12 @@ import { CantonClient } from "../shared/client.js";
 import { PACKAGE_ID } from "../shared/types.js";
 import { BuyerAgent, defaultRfq, SELECTION_POLICY } from "../buyer/buyer.js";
 import { settleDeal } from "../shared/settlement.js";
-import { CTBILL, CUSDC } from "../shared/config.js";
+import { CTBILL, CUSDC, PARTICIPANTS } from "../shared/config.js";
 
-const baseUrl = process.env.SHADOWDESK_LEDGER_URL ?? "http://127.0.0.1:6864";
+const baseUrl = process.env.SHADOWDESK_LEDGER_URL ?? PARTICIPANTS.participant1.jsonApi;
 
-const assertPackageUploaded = async (): Promise<void> => {
-  const resp = await fetch(`${baseUrl}/v2/packages`);
-  const body = (await resp.json()) as { packageIds?: string[] };
-  const ids = body.packageIds ?? [];
+const assertPackageUploaded = async (client: CantonClient): Promise<void> => {
+  const ids = await client.packageIds();
   if (!ids.includes(PACKAGE_ID)) {
     throw new Error(`ledger does not have package ${PACKAGE_ID}; upload the current DAR first`);
   }
@@ -19,8 +17,8 @@ const assertPackageUploaded = async (): Promise<void> => {
 const main = async (): Promise<void> => {
   const buyer = new BuyerAgent(baseUrl, "participant1");
   const buyerParty = await buyer.provision();
-  await assertPackageUploaded();
   const client = new CantonClient(baseUrl, "participant1", "shadowdesk-agent");
+  await assertPackageUploaded(client);
   const dealerParty = `${buyerParty}`;
 
   const now = Date.now();
@@ -134,7 +132,12 @@ const main = async (): Promise<void> => {
   if (!secondAwardRejected) throw new Error("ledger accepted a second award for the same RFQ");
 
   const awards = await client.queryActiveContracts(buyerParty, ["ShadowDesk.Rfq:SealedQuote"], await client.ledgerEnd());
-  if (awards.length !== 1) throw new Error(`expected exactly one award, found ${awards.length}`);
+  const thisRunAwards = awards.filter((a) => a.createArgument.rfqReference === spec.reference);
+  if (thisRunAwards.length !== 1) {
+    throw new Error(
+      `expected exactly one award for ${spec.reference}, found ${thisRunAwards.length} of ${awards.length} on this ledger`,
+    );
+  }
 
   const { receiptCid, receipt } = await settleDeal(client, {
     reference: `DEAL-E2E-${now}`,
