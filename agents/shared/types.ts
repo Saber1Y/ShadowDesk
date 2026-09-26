@@ -1,5 +1,5 @@
 export const PACKAGE_NAME = "shadowdesk-rfq";
-export const PACKAGE_ID = "0450b46f9ccfaab4fc4730394d7dc38ba36a379827a16881b82c7431b677f979";
+export const PACKAGE_ID = "f3655cf47a0095fdaf023f303b3657b529a7f38de44b2d39330cad6a273d0a5f";
 
 export type Party = string;
 
@@ -36,6 +36,9 @@ export interface QuoteProposal {
 
 export interface SealedQuote {
   rfq: string;
+  rfqReference: string;
+  maxPrice: string;
+  invitedDealers: Party[];
   buyer: Party;
   dealer: Party;
   assetToBuy: string;
