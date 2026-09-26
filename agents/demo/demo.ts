@@ -1,4 +1,4 @@
-import { BuyerAgent, selectWinner, defaultRfq, type RfqOverrides } from "../buyer/buyer.js";
+import { BuyerAgent, selectWinner, defaultRfq, SELECTION_POLICY, type RfqOverrides } from "../buyer/buyer.js";
 import { DealerAgent, fixedPricePolicy } from "../dealer/dealer.js";
 import { settleDeal, registerSettlementIntent, resolveSettlementIntent } from "../shared/settlement.js";
 import { PARTICIPANTS, CUSDC, CTBILL, type AssetIdSpec } from "../shared/config.js";
@@ -107,11 +107,17 @@ const main = async () => {
     [buyerParty],
     `cmd-accept-${winner.bidId}`,
   );
-  (sealedTx.transaction.events as any[])
+  const sealedEvent = (sealedTx.transaction.events as any[])
     .map((e: any) => e.CreatedEvent)
     .filter(Boolean)
     .find((e: any) => e.templateId.endsWith(":ShadowDesk.Rfq:SealedQuote"));
-  console.log(`[venue] sealed quote for winner (no other dealer can see it)`);
+  if (!sealedEvent) throw new Error("AcceptProposal produced no sealed quote");
+  const sealedCid: string = sealedEvent.contractId;
+  const sealedPolicy: string = sealedEvent.createArgument.selectionPolicy;
+  if (sealedPolicy !== SELECTION_POLICY) {
+    throw new Error(`Award carries policy ${sealedPolicy}, expected ${SELECTION_POLICY}`);
+  }
+  console.log(`[venue] sealed quote for winner under policy=${sealedPolicy} (no other dealer can see it)`);
 
   // Privacy guard: losing dealer (cross-participant) must not see winner's sealed quote
   const losingDealer = dealers.find((d) => d.dealerParty !== winner.dealer)!;
@@ -142,9 +148,13 @@ const main = async () => {
     paymentCid: cashCid,
     securityCid: intent.securityCid,
     settlementAsset: spec.settlementAsset,
+    sealedQuoteCid: sealedCid,
+    expectedBidId: winner.bidId,
+    expectedPolicy: SELECTION_POLICY,
     expiry: spec.expiry,
   });
   console.log(`[venue] DvP settled on ${P1.name}: receipt=${receiptCid.slice(0, 16)}... value=${receipt.totalValue}`);
+  console.log(`[venue] receipt audits award bid=${receipt.bidId} policy=${receipt.selectionPolicy} rfq=${String(receipt.rfq).slice(0, 16)}...`);
 
   const end = await buyer.client.ledgerEnd();
   const buyerAssets = await buyer.client.queryActiveContracts(buyerParty, ["ShadowDesk.Asset:Asset"], end);
