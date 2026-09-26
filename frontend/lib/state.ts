@@ -228,9 +228,6 @@ const checkPrivacy = async (
   parties: DashboardState["parties"],
   p1Records: RawCreated[],
 ): Promise<{ checked: boolean; winnerDealer: string | null; losingDealer: string | null; losingSeesWinnerQuotes: number | null }> => {
-  if (P1.baseUrl === P2.baseUrl) {
-    return { checked: false, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null };
-  }
   const sealed = p1Records.filter((r) => r.templateId.split(":").pop() === "SealedQuote");
   if (sealed.length === 0) return { checked: true, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null };
 
