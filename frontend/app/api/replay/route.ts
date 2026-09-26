@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { getCantonAuth } from "@/lib/canton-auth";
 import { loadDashboardState } from "@/lib/state";
 
 export const dynamic = "force-dynamic";
@@ -7,12 +8,27 @@ export const maxDuration = 120;
 let running = false;
 const ASSET_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
+const DEVNET_PARTY_VARIABLES = [
+  "SHADOWDESK_BUYER_PARTY",
+  "SHADOWDESK_DEALER_A_PARTY",
+  "SHADOWDESK_DEALER_B_PARTY",
+];
+
 export async function POST(request: Request) {
+  let cantonAccessToken: string | undefined;
   if (process.env.SHADOWDESK_NETWORK === "devnet") {
-    return Response.json({
-      ok: false,
-      reason: "DevNet RFQ execution is not enabled yet. The current round seeds local demo Asset contracts; registry-backed token settlement must be integrated first.",
-    }, { status: 501 });
+    const missing = DEVNET_PARTY_VARIABLES.filter((name) => !process.env[name]);
+    if (missing.length > 0) {
+      return Response.json({
+        ok: false,
+        reason: `DevNet needs a party for each role. Missing: ${missing.join(", ")}.`,
+      }, { status: 400 });
+    }
+    const auth = await getCantonAuth();
+    if (!auth.accessToken) {
+      return Response.json({ ok: false, reason: "Sign in before running a round." }, { status: 401 });
+    }
+    cantonAccessToken = auth.accessToken;
   }
 
   if (running) {
@@ -44,6 +60,7 @@ export async function POST(request: Request) {
     env: {
       ...process.env,
       NODE_ENV: "production",
+      ...(cantonAccessToken ? { SHADOWDESK_CANTON_ACCESS_TOKEN: cantonAccessToken } : {}),
       SHADOWDESK_AMOUNT: String(amount),
       SHADOWDESK_MAX_PRICE: String(maxPrice),
       SHADOWDESK_ASSET_TO_BUY: assetToBuy,
