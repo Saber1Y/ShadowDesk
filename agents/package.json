@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "demo": "tsx demo/demo.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e:award-chain": "tsx e2e/award-chain-check.ts"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
