@@ -1,5 +1,9 @@
 module ShadowDesk.Rfq where
 
+data SelectionPolicy =
+  LowestPriceThenBidId
+  deriving (Eq, Show)
+
 template BlockTradeRFQ
   with
     buyer : Party
@@ -8,6 +12,7 @@ template BlockTradeRFQ
     settlementAsset : Text
     amount : Decimal
     maxPrice : Decimal
+    selectionPolicy : SelectionPolicy
     reference : Text
     expiry : Time
   where
@@ -77,6 +82,7 @@ template QuoteProposal
           amount = this.amount
           offeredPrice = this.offeredPrice
           bidId = this.bidId
+          selectionPolicy = rfqRef.selectionPolicy
           expiry = this.expiry
 
     nonconsuming choice WithdrawProposal : ()
@@ -94,17 +100,7 @@ template SealedQuote
     amount : Decimal
     offeredPrice : Decimal
     bidId : Text
+    selectionPolicy : SelectionPolicy
     expiry : Time
   where
     signatory buyer, dealer
-
-    choice AcceptQuote : ()
-      controller buyer
-      do
-        currentTime <- getTime
-        rfqRef <- fetch this.rfq
-        assertMsg "RFQ has expired" (currentTime < rfqRef.expiry)
-        assertMsg "Quote has expired" (currentTime < this.expiry)
-        assertMsg "Quote price must be positive" (this.offeredPrice > 0.0)
-        assertMsg "Quote amount must be positive" (this.amount > 0.0)
-        pure ()
