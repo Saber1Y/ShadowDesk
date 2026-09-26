@@ -43,12 +43,16 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
           </div>
         </HudPanel>
 
-        <HudPanel label="Live RFQ" icon={Send} className="lg:col-span-4">
+        <HudPanel label={latestRfq?.awarded ? "Awarded RFQ" : "Live RFQ"} icon={Send} className="lg:col-span-4">
           {latestRfq ? (
             <>
               <div className="flex items-center justify-between gap-2">
                 <p className="truncate font-mono text-[14px] font-semibold text-foreground">{latestRfq.reference}</p>
-                <StatusPill tone="live" label="OPEN" pulse />
+                {latestRfq.awarded ? (
+                  <StatusPill tone="ok" label="AWARDED" />
+                ) : (
+                  <StatusPill tone="live" label="OPEN" pulse />
+                )}
               </div>
               <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-5">
                 <Metric label="Size" value={`${fmtQty(latestRfq.amount)} ${latestRfq.assetToBuy}`} accent />
