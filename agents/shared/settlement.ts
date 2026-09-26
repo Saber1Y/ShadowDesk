@@ -1,5 +1,5 @@
 import { CantonClient } from "../shared/client.js";
-import { TPL } from "../shared/types.js";
+import { TPL, type SelectionPolicy } from "../shared/types.js";
 import type { AssetIdSpec } from "../shared/config.js";
 
 export interface SettlementIntent {
@@ -32,6 +32,9 @@ export interface DealSpec {
   paymentCid: string;
   securityCid: string;
   settlementAsset: AssetIdSpec;
+  sealedQuoteCid: string;
+  expectedBidId: string;
+  expectedPolicy: SelectionPolicy;
   expiry: string;
 }
 
@@ -51,6 +54,7 @@ export const settleDeal = async (
       settlementAsset: spec.settlementAsset,
       paymentCid: spec.paymentCid,
       securityCid: spec.securityCid,
+      sealedQuote: spec.sealedQuoteCid,
       expiry: spec.expiry,
     },
     [spec.buyer, spec.dealer],
@@ -81,5 +85,18 @@ export const settleDeal = async (
     }
   }
   if (!dealCid || !receiptCid || !receipt) throw new Error("Settle produced no receipt");
+
+  if (receipt.bidId !== spec.expectedBidId) {
+    throw new Error(`Receipt bid ${receipt.bidId} does not match the awarded bid ${spec.expectedBidId}`);
+  }
+  if (receipt.selectionPolicy !== spec.expectedPolicy) {
+    throw new Error(
+      `Receipt policy ${receipt.selectionPolicy} does not match the RFQ policy ${spec.expectedPolicy}`,
+    );
+  }
+  if (receipt.sealedQuote !== spec.sealedQuoteCid) {
+    throw new Error("Receipt does not reference the awarded sealed quote");
+  }
+
   return { dealCid, receiptCid, receipt };
 };
