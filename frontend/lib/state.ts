@@ -270,15 +270,15 @@ const checkPrivacy = async (
   p1Records: RawCreated[],
 ): Promise<{ checked: boolean; winnerDealer: string | null; losingDealer: string | null; losingSeesWinnerQuotes: number | null }> => {
   const sealed = p1Records.filter((r) => r.templateId.split(":").pop() === "SealedQuote");
-  if (sealed.length === 0) return { checked: true, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null };
+  if (sealed.length === 0) return { checked: false, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null };
 
   const winnerDealer = partyHint((sealed[0].createArgument?.dealer as string) ?? "");
   const losingDealer = winnerDealer === "dealerA" ? "dealerB" : "dealerA";
   const losingParty = losingDealer === "dealerB" ? parties.dealerB : parties.dealerA;
-  if (!losingParty) return { checked: true, winnerDealer, losingDealer, losingSeesWinnerQuotes: null };
+  if (!losingParty) return { checked: false, winnerDealer, losingDealer, losingSeesWinnerQuotes: null };
 
   const client = losingDealer === "dealerB" ? P2 : P1;
-  if (!(await client.ping())) return { checked: true, winnerDealer, losingDealer, losingSeesWinnerQuotes: null };
+  if (!(await client.ping())) return { checked: false, winnerDealer, losingDealer, losingSeesWinnerQuotes: null };
   const records = await client.queryActiveContracts(losingParty, await client.ledgerEnd());
   const winnerSeen = records.filter((r) => {
     const last = r.templateId.split(":").pop();
