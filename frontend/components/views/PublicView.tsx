@@ -24,6 +24,7 @@ export function PublicView({ state }: { state: DashboardState }) {
   const { public: pub, participants, privacy } = state;
   const eventCount = pub.events.length;
   const allReachable = participants.every((p) => p.reachable);
+  const distinctParticipants = new Set(participants.map((p) => p.jsonApi.replace(/\/+$/, ""))).size > 1;
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
@@ -74,9 +75,9 @@ export function PublicView({ state }: { state: DashboardState }) {
         >
           <p className="mb-5 max-w-[70ch] text-[13px] leading-relaxed text-muted-foreground">
             This panel is the venue's <span className="text-foreground">sanitized public projection</span>. It shows only
-            application metadata: event type, reference, timestamp, and encrypted-payload indicators. Quote prices,
-            block size, and payloads never appear here - they remain encrypted to their party signatories on the
-            synchronizer.
+            application metadata: event type, reference, timestamp, and payload classifications. Canton routes
+            transaction views to authorized participants; the synchronizer orders encrypted messages but cannot decrypt
+            private payloads. Quote prices, block size, and contract payloads are omitted from this application projection.
           </p>
 
           <TerminalLog events={pub.events} />
@@ -85,10 +86,13 @@ export function PublicView({ state }: { state: DashboardState }) {
             <div className="mt-5 flex items-center gap-3 rounded-xl border border-primary/25 bg-primary/5 px-4 py-3">
               <ShieldCheck className="size-4 shrink-0 text-primary" />
               <p className="font-mono text-[10.5px] leading-relaxed text-muted-foreground">
-                <span className="text-primary">CROSS-PARTICIPANT PRIVACY</span> - losing dealer{" "}
+                <span className="text-primary">{distinctParticipants ? "DISTINCT-ENDPOINT VIEW CHECK" : "PARTY-VIEW CHECK"}</span> - losing dealer{" "}
                 <span className="text-foreground">{privacy.losingDealer}</span> observes{" "}
                 <span className="text-foreground">{privacy.losingSeesWinnerQuotes ?? "-"}</span> of the winning
                 dealer's quotes (expect 0).
+                {distinctParticipants
+                  ? " The roles use distinct participant endpoints."
+                  : " Both roles use one participant endpoint, so this does not test isolation from a credential authorized for both parties."}
               </p>
             </div>
           )}
