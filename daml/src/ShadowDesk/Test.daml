@@ -96,6 +96,34 @@ runPrivateRfqLifecycle = do
   activeSealed <- query @SealedQuote buyer
   assertMsg "Exactly one award exists after a second acceptance attempt" (length activeSealed == 1)
 
+runMaxPriceCannotBeOverridden : Script ()
+runMaxPriceCannotBeOverridden = do
+  buyer <- allocateParty "buyer"
+  dealer <- allocateParty "dealerA"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+
+  rfqCid <- submit buyer do
+    createCmd (rfqTemplate buyer [dealer] expiry "RFQ-MAX-PRICE")
+
+  proposalCid <- submit dealer do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealer
+      offeredPrice = 101.01
+      bidId = "BID-OVER-CAP"
+
+  -- A command argument must not let the buyer override the cap stored in the RFQ.
+  submitMustFail buyer do
+    exerciseCmd proposalCid AcceptProposal with
+      maxPrice = 1_000.0
+
+  activeRfq <- queryContractId buyer rfqCid
+  assertMsg "Rejected over-cap award leaves the RFQ active" (activeRfq /= None)
+
+  activeAwards <- query @SealedQuote buyer
+  assertMsg "Rejected over-cap award creates no sealed quote" (length activeAwards == 0)
+
 runAuthorizationAndReplayBoundaries : Script ()
 runAuthorizationAndReplayBoundaries = do
   buyer <- allocateParty "buyer"
