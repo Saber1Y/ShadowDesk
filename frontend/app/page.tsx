@@ -272,9 +272,9 @@ export default function Page() {
                 <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
                   <div>
                     <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">Trade request</p>
-                    <p className="mt-1 text-[13px] text-muted-foreground">Choose the wrapped Canton instruments and terms for this round.</p>
+                    <p className="mt-1 text-[13px] text-muted-foreground">Choose synthetic asset symbols and trade terms. Symbols do not select registry tokens.</p>
                   </div>
-                  <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">local wrapped Asset contracts</span>
+                  <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">Synthetic ShadowDesk.Asset · not CIP-56</span>
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <AssetField label="Security" value={assetToBuy} onChange={setAssetToBuy} listId="security-assets" />
