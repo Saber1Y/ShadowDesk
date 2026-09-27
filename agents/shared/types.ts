@@ -1,5 +1,5 @@
-export const PACKAGE_NAME = "shadowdesk-rfq";
-export const PACKAGE_ID = "f3655cf47a0095fdaf023f303b3657b529a7f38de44b2d39330cad6a273d0a5f";
+export const PACKAGE_NAME = "shadowdesk-rfq-v2";
+export const PACKAGE_ID = "6b2d3dfa528026be8a3c7446b8d5a995b771d90be42a7a8f7952a3065d68f6ae";
 
 export type Party = string;
 
