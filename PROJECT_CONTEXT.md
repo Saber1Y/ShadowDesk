@@ -694,6 +694,41 @@ Next actions:
 2. Keep real-value settlement (CIP-56 `allocate`/`execute` over Splice Amulet) as a separate workstream; it needs a Docker LocalNet plus Amulet and the `splice-token-standard-test` harness, and dealer Amulets that do not exist yet.
 3. Record the walkthrough and submission brief once DevNet is confirmed for the final recording.
 
+### Session 2026-09-26 (third): DevNet Upload Landed, Blocked on Validator Vetting
+
+The 1.1.0 DAR reached the shared DevNet participant and is accepted by the API, but the round cannot be submitted.
+
+Package state on hackcanton-01:
+- 1.1.0 is present. `GET /v2/packages/<id>/status` returns `PACKAGE_STATUS_REGISTERED`; `GET /v2/packages/<id>` returns 200.
+- 1.0.0 (`6cf7d6a6d9ab600cdbafed0c0623207aa15e0a234ccb911359d8d925468d8646`) is also present and is the only vetted candidate.
+- An earlier 1.1.0 build (`0450b46f...`) is absent; it was pre-change and never uploaded.
+
+Blocking error, reproduced with trace `25938967cca640be6be33dd3ab74d202`:
+`JSON_API_PACKAGE_SELECTION_FAILED: No synchronizer satisfies the vetting requirements. No vetted package candidate satisfies the package-id filter`
+This is validator-side state, not participant-side. It cannot be fixed client-side; NODERS must vet 1.1.0. Re-uploading does not help, because the package is already registered.
+
+Hazard worth carrying to NODERS: the JSON Ledger API resolves a `templateId` of the form `#shadowdesk-rfq:Rfq` by package *name*. With 1.0.0 and 1.1.0 both registered under `shadowdesk-rfq`, name-based resolution silently selects 1.0.0, and a 1.1.0 command fails with `Unexpected fields: selectionPolicy`. Any 1.0.0-era client on that node is talking to the old package without any signal. The fix on our side is the documented command-level `packageIdSelectionPreference`, which is what the error above was asking for.
+
+Three defects found while chasing this, all fixed:
+- The award-chain check fetched `/v2/packages` unauthenticated. On a node requiring auth the 401 surfaced as "upload the current DAR first", sending us to re-upload a package that was already present. It now uses the authenticated client.
+- The check derived its base URL from `SHADOWDESK_LEDGER_URL` alone, so a DevNet run without that extra variable silently targeted `127.0.0.1`. It now derives the URL from the configured participant.
+- "exactly one award" counted every active `SealedQuote` on the ledger rather than this run's, so it only passed on a pristine sandbox and would fail every time on the shared DevNet. It is now scoped to the run's reference.
+
+The README claimed DevNet RFQ execution was "intentionally disabled". The replay route has no such switch; it requires a signed-in session and a configured party per role. Corrected.
+
+Local validation after the fixes: `dpm test` 9/9; agents typecheck clean; award-chain e2e passes repeatedly, including on a ledger that already holds a prior award and with the base URL variable unset; the two-participant demo completes with atomic DvP and dealer secrecy intact.
+
+Environment note: the demo's `LOCAL_VERDICT_TIMEOUT` on first create was resource exhaustion, not a ledger fault. The sandbox JVM was sizing its heap from ambient RAM and overcommitting while the machine sat at 8.2 GB of 9.2 GB swap used. `run-demo.sh` now caps the heap via `JAVA_OPTS`, which makes the demo footprint independent of what else is running. Verified: sandbox RSS ~736 MB, demo completes, memory-pressure free share 49 percent before and 39 percent after.
+
+Security note: a diagnostic during this session printed live OIDC access and refresh tokens into the local transcript. Treat that transcript as sensitive; revoke and re-authenticate rather than reusing the session.
+
+DevNet structural limit, confirmed from the shared-node guide: every party created on the shared participant shares the same `::1220...` suffix, because that suffix is the participant node id. Cross-participant quote privacy therefore cannot be demonstrated on this DevNet by construction. The two-participant localnet remains the only place the dealer-isolation claim is provable, and is the better recording target.
+
+Next actions:
+1. NODERS to vet 1.1.0 (`f3655cf47a0095fdaf023f303b3657b529a7f38de44b2d39330cad6a273d0a5f`). Ask whether vetting is automatic after upload or needs a manual trigger, and whether a same-name re-vet is possible or a new version or package name is required.
+2. Re-authenticate, then rerun the DevNet award-chain check to confirm the `packageIdSelectionPreference` fix carries through end to end.
+3. Record the walkthrough from the two-participant localnet, not the DevNet, because only the localnet can evidence dealer isolation.
+
 ## Open Decisions
 
 These decisions must be resolved before production implementation.
