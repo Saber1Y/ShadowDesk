@@ -123,7 +123,9 @@ The round reports a readable explanation in the dashboard while the technical de
 
 ## Privacy evidence
 
-The demo asserts, and the dashboard surfaces, a live cross-participant privacy check: the losing dealer (participant2) queries the synchronizer for the winner's sealed quote and observes zero contracts. Because `SealedQuote` and the quote payloads are visible only to their signatories/observers, a dealer on a different participant cannot see a competing dealer's price at rest.
+The demo asserts, and the dashboard surfaces, a party-scoped query: the losing dealer asks its participant's JSON Ledger API for the winner's quote and observes zero contracts. On LocalNet, the dealers use separate participant endpoints, so this also demonstrates cross-participant isolation for the configured parties.
+On the shared HackCanton DevNet, both roles use one participant endpoint and the configured ledger identity can read as all three parties. The party-scoped view remains distinct, but that setup does not demonstrate isolation from a credential authorized for both dealers.
+Canton routes transaction views to authorized participants; synchronizers order encrypted messages and cannot decrypt private payloads. The dashboard's sanitized public projection is an application view, not a network-wide ledger feed.
 
 ## Tests and type checks
 
