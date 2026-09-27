@@ -722,7 +722,14 @@ Environment note: the demo's `LOCAL_VERDICT_TIMEOUT` on first create was resourc
 
 Security note: a diagnostic during this session printed live OIDC access and refresh tokens into the local transcript. Treat that transcript as sensitive; revoke and re-authenticate rather than reusing the session.
 
-DevNet structural limit, confirmed from the shared-node guide: every party created on the shared participant shares the same `::1220...` suffix, because that suffix is the participant node id. Cross-participant quote privacy therefore cannot be demonstrated on this DevNet by construction. The two-participant localnet remains the only place the dealer-isolation claim is provable, and is the better recording target.
+DevNet topology note: every party created on the shared participant shares the same `::1220...` suffix because that suffix is the participant node id.
+The UI's party-filtered query can still show that Dealer B's view returns zero of Dealer A's quote contracts.
+However, the configured shared ledger identity can read as all three parties, so this does not prove isolation from a credential authorized for both dealers.
+The two-participant LocalNet proves that separate-participant setup; DevNet tests the shared-node integration path.
+
+Canton privacy correction: the synchronizer orders encrypted messages and cannot decrypt transaction payloads.
+Avoid saying that it sees plaintext contract content.
+It is accurate to describe the JSON Ledger API query as a party-scoped participant view, not as a query to the synchronizer.
 
 Next actions:
 1. NODERS to vet 1.1.0 (`f3655cf47a0095fdaf023f303b3657b529a7f38de44b2d39330cad6a273d0a5f`). Ask whether vetting is automatic after upload or needs a manual trigger, and whether a same-name re-vet is possible or a new version or package name is required.
