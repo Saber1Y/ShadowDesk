@@ -10,15 +10,15 @@ Read this file before changing architecture, contract visibility, settlement log
 
 - Repository state: git repo initialized at workspace root (branch `main`, remote origin `https://github.com/Saber1Y/ShadowDesk`), Daml package scaffolded at `/Users/mac/codes/Shadow Desk/daml`, TypeScript agents in `agents/`, Next.js dashboard in `frontend/`; runtime artifacts (node_modules, .daml, log/, .next) gitignored. History committed per logical file/unit; dashboard rebranded to the official Canton palette (yellow `#F3FF97`, black `#030206`, white `#FFFFFC`, lilac `#D5A5E3`, purple `#875CFF`, taupe `#A89F91`) with a segmented C-ring mark + `app/icon.svg` favicon.
 - Implementation state: privacy templates compiling, agent services live, dashboard live.
-- Daml state: package `shadowdesk-rfq` 1.1.0 builds to `.daml/dist/shadowdesk-rfq-1.1.0.dar` (package id `f3655cf47a0095fdaf023f303b3657b529a7f38de44b2d39330cad6a273d0a5f`); nine daml-script tests pass via `dpm test` (eight scenarios plus `noop`).
+- Daml state: package `shadowdesk-rfq-v2` 1.0.0 builds to `.daml/dist/shadowdesk-rfq-v2-1.0.0.dar` (package id `6b2d3dfa528026be8a3c7446b8d5a995b771d90be42a7a8f7952a3065d68f6ae`); `dpm test` passes nine scenarios plus `noop`.
 - Canton state: local Canton 3.5.17 sandbox validated. `dpm sandbox` starts a full single-process network; Ledger API gRPC on 127.0.0.1:6865, HTTP on 6864. Party store persists per-node between runs; readiness must be keyed on the log line `Canton sandbox is ready.`, not on the port.
 - Multi-participant state: `dpm sandbox -c daml/distributed-run.conf` brings up a second participant `participant2` (Ledger API gRPC 18001, admin 18002, HTTP 18003) on the same synchronizer, auto-connected. Cross-participant privacy and settlement proven live via `participants.json`/`participants-p2.json` runner configs (default participant hosts the DAR upload; `--upload-dar=true` uploads only to the default participant, so DAR must be uploaded once per participant).
 - Agent state: buyer/dealer/dealer agent services scaffolded in `/Users/mac/codes/Shadow Desk/agents` (TypeScript + Node, JSON Ledger API v2). Waits proven live end-to-end across both participants: buyer creates RFQ, both dealers quote from their own participant, buyer deterministically selects the winner within maxPrice, seals the quote, and DvP settles atomically on participant1. The losing dealer on participant2 sees zero of the winner's quotes (asserted in the demo run).
 - Frontend state: Next.js 15 (App Router, Tailwind v4, Motion, lucide) dashboard in `/Users/mac/codes/Shadow Desk/frontend`. Live command-center console UI: floating pill nav, dot-grid dark studio, lime accent, mono micro-labels. Two tabs: Public projection (sanitized execution-ledger metadata + cross-participant privacy banner) and Institutional (buyer view: holdings, live RFQ, independent quotes with sealed/lost states, settled DvP receipt). A "Run round" button streams the real two-participant agent run into a terminal console and the projections update live from actual ledger queries. Server-side projections read the JSON API on both participants; the browser never touches a participant directly.
 - Settlement state: two-leg atomic DvP implemented. `Deal` template (signatory buyer+dealer) with `Settle` choice performs validated payment-for-security exchange in one transaction; `SettlementReceipt` issued. Guards: expiry, exact security quantity, settlement-asset match, payment coverage, and agreement with the awarded `SealedQuote` (buyer, dealer, price, size, and both instruments). Both legs verify from ledger results in tests. The receipt records the originating RFQ, the sealed quote, the winning bid id, and the selection policy, so the award is traceable on-ledger.
 - Selection state: each `BlockTradeRFQ` declares a `SelectionPolicy` (`LowestPriceThenBidId`) that the sealed quote inherits. The buyer agent still ranks proposals client-side, because Daml cannot enumerate every proposal contract to compute a global minimum, and the ledger enforces only that settlement matches the award. A request is awarded at most once: `AcceptProposal` consumes the RFQ, so a second or concurrent acceptance can no longer resolve it. The sealed quote therefore also records the request's reference, max price, and invited dealers, which keeps the awarded round reconstructable after the RFQ is archived and lets the dashboard show it as `AWARDED` instead of `OPEN`. The ledger does not check that the buyer chose the cheapest quote; that remains a buyer-side duty.
-- Deployment state: package `shadowdesk-rfq` 1.1.0 is built and verified against a local Canton 3.5.17 sandbox via `npm run e2e:award-chain` in `agents/`, and a full two-participant demo round completed on it. It is not yet uploaded to DevNet. DevNet upload of the new DAR is a manual step. `scripts/localnet/run-demo.sh` now resolves the DAR path from the version in `daml/daml.yaml` instead of hardcoding it, so a version bump no longer breaks the bootstrap. The previous 1.0.0 build was uploaded to the live local sandbox (main package id `f719639eab2b84e28af4f175ad4056b24ddb1aefb4c9112bdd86f759ab94a5b8` at session end; earlier build was `863466b59a887f46b38f58485e6ff7540a93453bb9d052b2586da81795d9b07a`).
-- Verification state: all five daml-script scenarios executed successfully against the live sandbox Ledger API via `dpm script` with party allocation, DvP settlement, and fraud-rejection on real transactions. Multi-participant privacy and settlement scenario also executed successfully against a live two-participant sandbox. The 1.1.0 award chain was additionally verified against a real single-node sandbox Ledger API through the JSON API.
+- Deployment state: package `shadowdesk-rfq-v2` 1.0.0 is built and Daml-tested locally but not uploaded to DevNet. The same-name 1.1.1 upload was rejected as `NOT_VALID_UPGRADE_PACKAGE` because the 1.0.0 schema has a choice and template fields that the new schema removed/changed. Package `shadowdesk-rfq` 1.1.0 (`f3655cf...`) remains registered but unvetted; live DevNet state still contains 1.0.0 (`6cf7d6a6...`). Upload and request vetting for the new package name and ID above. `scripts/localnet/run-demo.sh` derives the DAR filename from `daml/daml.yaml`.
+- Verification state: `dpm test` passes nine Daml scenarios plus `noop`, including a regression test that prevents overriding the max price via the award command. Agent typecheck passes with the 1.1.1 package id. The full agent E2E and two-participant demo were previously verified against the 1.1.0 source before this security fix; re-run them against 1.1.1 after deployment.
 - Planning state: product concept, MVP requirements, and phase plan are documented.
 
 ## Product Decision
@@ -761,9 +761,64 @@ The Build-on-Canton MCP is configured globally in OpenCode and `opencode mcp lis
 Restart OpenCode to load newly configured MCP tools into a fresh session.
 
 Next actions:
-1. Obtain NODERS confirmation that package 1.1.0 is vetted.
-2. With the authenticated DevNet UI already running, submit a synthetic cTBILL/cUSDC round and verify the command path selects package 1.1.0.
-3. Treat real cBTC/cETH DvP as a separate feature: integrate the actual Token Standard V2 allocation APIs and confirm instrument availability and balances first.
+1. Upload the corrected 1.1.1 DAR and ask NODERS to vet package `407a00845eebd756d8a23bcac1a6e1a4b143e01e353c551ccf859a39baba2bbe`; do not ask them to vet the superseded 1.1.0 build.
+2. Request CBTC test holdings for the configured buyer/dealer parties from BitSafe or the event operators; query the onRails team for the DevNet cETH instrument id and test-token grant.
+3. Build and test CIP-0112 allocation DvP locally, then submit the next compatible DAR for vetting once the token-rail path is complete.
+
+### Session 2026-09-27 (second): Max-Price Override Regression and Package 1.1.1
+
+A direct Daml Script reproduction found that a buyer could pass `maxPrice = 1000` to `AcceptProposal` and award a quote at 101.01 even though the stored RFQ cap was 101.
+The choice compared the quote against its caller-supplied argument rather than the immutable RFQ value.
+The same pattern is present in the deployed 1.0.0 source; those DevNet contracts use synthetic `ShadowDesk.Asset` instruments, not real tokens.
+
+Fixes applied:
+- `AcceptProposal` now requires its `maxPrice` argument to equal the RFQ's stored maximum and checks the quote against the stored maximum.
+- `Deal.Settle` rechecks that the awarded quote did not exceed its recorded maximum.
+- `runMaxPriceCannotBeOverridden` submits a 101.01 proposal against a 101 RFQ, tries to override the command argument to 1000, and verifies the award is rejected while the RFQ remains active and no sealed quote is created.
+
+The reproduction failed before the contract change exactly as expected: the over-cap award committed and archived the RFQ.
+After the change, `dpm test` passes nine scenarios plus `noop`; agent TypeScript typecheck also passes.
+The Daml package version is now 1.1.1, package id `407a00845eebd756d8a23bcac1a6e1a4b143e01e353c551ccf859a39baba2bbe`.
+This artifact is not yet uploaded or vetted on DevNet, and the agent package-id pin was updated to match it.
+
+The old NODERS request for 1.1.0 is superseded: same-name package 1.1.1 was rejected as an incompatible upgrade, so request vetting for `shadowdesk-rfq-v2` 1.0.0 instead.
+The buyer price ceiling is still visible to invited dealers because `maxPrice` is currently a field on the observed RFQ.
+Making the cap buyer-private requires a separate buyer-only mandate contract and should be designed before another schema release.
+
+### Session 2026-09-27 (fourth): Use a New Package Name for the Breaking Schema
+
+Uploading `shadowdesk-rfq` 1.1.1 failed with `NOT_VALID_UPGRADE_PACKAGE`: the node compared it against vetted `shadowdesk-rfq` 1.0.0 and found that `SealedQuote.AcceptQuote` was removed.
+The full source diff also adds required fields to existing templates and changes settlement contracts, so restoring that one choice would only reveal more upgrade incompatibilities.
+Do not keep patching one compatibility error at a time.
+
+The 1.1.1 source was renamed as a fresh package line, `shadowdesk-rfq-v2` version `1.0.0`, to coexist with the existing vetted `shadowdesk-rfq` package without claiming a schema upgrade.
+The rebuilt package id is `6b2d3dfa528026be8a3c7446b8d5a995b771d90be42a7a8f7952a3065d68f6ae`.
+`agents/shared/types.ts` pins this id and the v2 package name.
+`dpm build`, `dpm test` (nine scenarios plus `noop`), and `npm run typecheck` pass.
+The new DAR has not been uploaded or vetted on DevNet.
+
+Next action: upload `.daml/dist/shadowdesk-rfq-v2-1.0.0.dar` and ask NODERS to vet package id `6b2d3dfa528026be8a3c7446b8d5a995b771d90be42a7a8f7952a3065d68f6ae`.
+
+Current HackCanton Season 3 research:
+- The AppsFactory event page lists submission at October 9, 2026, 23:59 UTC; five tracks; one project may enter up to two tracks.
+- The most relevant tracks are Financial Applications (real economic activity and network flows) and Investment Infrastructure (fund/capital workflows, role-based operation, auditability).
+- Season 2's overall winners were Rocky Exchange, Umbra, and Tirai; Umbra and Tirai directly overlap ShadowDesk's confidential OTC/RFQ thesis.
+- NODERS' recap says the strongest projects made Canton do real architectural work, shipped a workflow reviewers could inspect asynchronously, and showed live DevNet transactions and honest evidence.
+- Tirai's current public README describes real Canton Coin/CBTC settlement via CIP-0056 allocation, Vickrey, regulator reporting, selective disclosure, and best-execution attestations; its reported trade history is explicitly described as seeded, not customer volume.
+- ShadowDesk should not pitch itself as the first private RFQ desk. A differentiated route is policy-controlled treasury rebalancing with real token-standard DvP and a clear fund/treasury buyer.
+
+Current CBTC registry research:
+- The original registry probes used incorrect root paths. Correct CBTC metadata path: `https://api.utilities.digitalasset-dev.com/api/token-standard/v0/registrars/cbtc-network::12202a83c6f4082217c175e29bc53da5f2703ba2675778ab99217a5a881a949203ff/registry/metadata/v1/instruments`.
+- The endpoint returned HTTP 200, instrument `CBTC`, `paused=false`, total supply `1013.39356` as of `2026-09-27T09:05:46Z`, and both V1/V2 holding and allocation APIs.
+- No CBTC Holding contract appeared in the configured buyer or dealer ACS queries. The buyer has an Amulet contract, but ShadowDesk does not use it.
+- BitSafe's current DevNet quick-start says external users cannot mint/redeem on DevNet; request test holdings or an authorized holder transfer before treating CBTC as usable.
+- The DevNet cETH registrar/instrument id and USDCx DevNet metadata have not been verified; do not substitute their MainNet identifiers.
+
+Content MCP contribution opportunity:
+- `canton-network-devs/Build-on-Canton-MCP` has no open issues and one open knowledge-base PR (#17) correcting party allocation paths and C7 package names.
+- Its current knowledge base does not mention CBTC/BitSafe/cETH or `packageIdSelectionPreference` / package vetting.
+- A separate sourced knowledge-base contribution can document the issuer-specific metadata path, network-specific instrument ids, actual DevNet CBTC limitations, and exact-package selection/vetting pitfalls.
+- The MCP is read-only; contributions are GitHub content PRs, not actions performed through the MCP server.
 
 ## Open Decisions
 
