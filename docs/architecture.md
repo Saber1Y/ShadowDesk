@@ -85,7 +85,10 @@ flowchart TB
     QP_B -. "NOT visible on P1" .-> BuyerNode
 ```
 
-A dealer on participant 2 observes the RFQ it was invited to, its own quote, and nothing from the other dealer. All quote payloads and the sealed quote are encoded for the involved parties only; the dashboard's privacy banner is a live cross-participant query proving the losing dealer sees zero of the winner's quotes.
+A dealer's party view includes the RFQs it was invited to and its own quote, but not a competing dealer's quote.
+The dashboard performs a party-filtered query through the losing dealer's participant Ledger API.
+With distinct participant endpoints, as in the LocalNet demo, that verifies cross-participant isolation for these parties.
+If both roles use a shared participant endpoint and a credential authorized for both parties, the check only verifies the losing party's scoped view; it does not prove isolation from that shared credential.
 
 ## Execution flow
 
