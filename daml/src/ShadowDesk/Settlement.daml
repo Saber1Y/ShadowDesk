@@ -27,6 +27,7 @@ template Deal
         award <- fetch this.sealedQuote
         assertMsg "Deal buyer must match the awarded quote" (award.buyer == this.buyer)
         assertMsg "Deal dealer must match the awarded quote" (award.dealer == this.dealer)
+        assertMsg "Awarded quote exceeds the buyer max price" (award.offeredPrice <= award.maxPrice)
         assertMsg "Deal price must match the awarded quote" (award.offeredPrice == this.unitPrice)
         assertMsg "Deal quantity must match the awarded quote" (award.amount == this.quantity)
         assertMsg "Deal security must match the awarded quote" (award.assetToBuy == this.security.symbol)
