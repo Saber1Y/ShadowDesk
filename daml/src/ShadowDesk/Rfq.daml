@@ -72,7 +72,8 @@ template QuoteProposal
         assertMsg "RFQ has expired" (currentTime < rfqRef.expiry)
         assertMsg "Quote proposal has expired" (currentTime < this.expiry)
         assertMsg "RFQ buyer mismatch" (rfqRef.buyer == buyer)
-        assertMsg "Offered price exceeds buyer max price" (this.offeredPrice <= maxPrice)
+        assertMsg "Award max price must match the RFQ" (maxPrice == rfqRef.maxPrice)
+        assertMsg "Offered price exceeds buyer max price" (this.offeredPrice <= rfqRef.maxPrice)
         -- Consume the request so it can be awarded exactly once. A second
         -- acceptance, or a concurrent one, can no longer fetch the RFQ.
         archive this.rfq
