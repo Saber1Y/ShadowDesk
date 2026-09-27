@@ -137,7 +137,7 @@ cd frontend && npm run typecheck
 cd frontend && npm run build
 ```
 
-`cd agents && npm run e2e:award-chain` exercises the award chain against a real single-node ledger and needs no Docker: start one with `cd daml && dpm sandbox --dar .daml/dist/shadowdesk-rfq-1.1.0.dar`. It creates an RFQ, quotes, seals, settles, and asserts that a `Deal` which disagrees with the awarded quote is rejected without moving the security.
+`cd agents && npm run e2e:award-chain` exercises the award chain against a real single-node ledger and needs no Docker: start one with `cd daml && dpm sandbox --dar .daml/dist/shadowdesk-rfq-v2-1.0.0.dar`. It creates an RFQ, quotes, seals, settles, and asserts that a `Deal` which disagrees with the awarded quote is rejected without moving the security.
 
 The live UI flow can be checked at `http://localhost:3001` after the localnet bootstrap.
 Verify both participants are live, run a custom RFQ, confirm the requested amount and instruments in the Institutional view, and confirm the privacy result reports zero winner quotes to the losing dealer.
