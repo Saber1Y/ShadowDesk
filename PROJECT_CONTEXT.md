@@ -736,6 +736,35 @@ Next actions:
 2. Re-authenticate, then rerun the DevNet award-chain check to confirm the `packageIdSelectionPreference` fix carries through end to end.
 3. Record the walkthrough from the two-participant localnet, not the DevNet, because only the localnet can evidence dealer isolation.
 
+### Session 2026-09-27: DevNet UI Readiness and Live Ledger Inspection
+
+The DevNet-configured frontend is running at `http://localhost:3001`.
+`GET /api/auth/session` reported `mode=devnet`; after the user signed in, a fresh authenticated request to the participant succeeded.
+
+The participant responds to `GET /v2/version` with HTTP 200.
+The authenticated package status for `f3655cf47a0095fdaf023f303b3657b529a7f38de44b2d39330cad6a273d0a5f` is HTTP 200 with `PACKAGE_STATUS_REGISTERED`.
+This does not show the 1.1.0 build as vetted; the last command-submission attempt reported no vetted candidate for its package-id preference.
+Do not run the current 1.1.0 UI round until NODERS confirms vetting, because the command will be rejected before settlement.
+
+An authenticated party-scoped ACS read found an existing DevNet round using package 1.0.0 (`6cf7d6a6...`).
+Its receipt records 1,000,000 synthetic `ShadowDesk` cTBILL at unit price 100.2, total 100,200,000 synthetic `ShadowDesk` cUSDC.
+The buyer ACS also contains an active Amulet contract, but the ShadowDesk settlement code does not use it.
+The visible cTBILL/cUSDC contracts are `ShadowDesk.Asset` demo instruments, not Canton Token Standard holdings.
+The buyer's party-scoped ACS and both dealer party-scoped ACS queries succeeded; listing all parties via `GET /v2/parties` returned 403, so continue using the configured role-party IDs rather than depending on party enumeration.
+
+DevNet UI now labels custom instruments as synthetic `ShadowDesk.Asset` symbols, not registry tokens.
+The privacy panel distinguishes party-view queries on a shared endpoint from queries through distinct participant endpoints.
+It only reports the privacy query as checked after the query actually runs.
+README, architecture, demo script, and this context now describe participant Ledger API views accurately and state that the synchronizer cannot decrypt private payloads.
+
+The Build-on-Canton MCP is configured globally in OpenCode and `opencode mcp list` reported `canton-dev` connected.
+Restart OpenCode to load newly configured MCP tools into a fresh session.
+
+Next actions:
+1. Obtain NODERS confirmation that package 1.1.0 is vetted.
+2. With the authenticated DevNet UI already running, submit a synthetic cTBILL/cUSDC round and verify the command path selects package 1.1.0.
+3. Treat real cBTC/cETH DvP as a separate feature: integrate the actual Token Standard V2 allocation APIs and confirm instrument availability and balances first.
+
 ## Open Decisions
 
 These decisions must be resolved before production implementation.
