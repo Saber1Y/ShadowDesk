@@ -28,11 +28,14 @@ Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environ
 
 ## 4. Prove the price is blind (1:00)
 
-> "The core claim is secrecy. Each dealer sees its own price and nothing else."
+> "The core claim is scoped confidentiality. Each dealer's party view contains its own price, not the competing dealer's."
 
 - Show **Quote proposals**: dealer A at 100.2, dealer B at 100.5, each with its bid id.
 - Go to **Public projection**.
-- Point at the **CROSS-PARTICIPANT PRIVACY** banner: "This is a live query. The losing dealer - dealer B on participant two - asked the synchronizer for the winner's sealed quote and found zero contracts. The payload is only visible to the parties involved in the quote, not to a competing participant."
+- Point at the privacy banner.
+  > “This is a live query through dealer B's participant Ledger API.
+  > The party-scoped view returns zero of dealer A's quote contracts.
+  > Because this recording uses separate local participants, it demonstrates cross-participant isolation for these parties.”
 
 ## 5. Selection and seal (0:30)
 
