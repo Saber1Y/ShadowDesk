@@ -3,6 +3,12 @@ set -euo pipefail
 
 export PATH="$HOME/.dpm/bin:$PATH"
 
+# Bound the sandbox JVM heap. Left uncapped, the JVM sizes itself from
+# whatever RAM it happens to see and overcommits, which shows up as
+# LOCAL_VERDICT_TIMEOUT on the first contract create rather than as an
+# obvious out-of-memory error. Export JAVA_OPTS yourself to override.
+export JAVA_OPTS="${JAVA_OPTS:--Xmx2g}"
+
 ROOT="/Users/mac/codes/Shadow Desk"
 LOG_DIR="$ROOT/log/distributed"
 
