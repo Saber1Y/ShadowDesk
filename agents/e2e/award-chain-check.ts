@@ -65,7 +65,9 @@ const main = async (): Promise<void> => {
   console.log(`[e2e] rfq created policy=${SELECTION_POLICY} cid=${rfqCid.slice(0, 24)}...`);
 
   const rfqs = await client.queryActiveContracts(buyerParty, ["ShadowDesk.Rfq:BlockTradeRFQ"], await client.ledgerEnd());
-  const onLedgerPolicy = (rfqs[0] as any).createArgument.selectionPolicy;
+  const rfq = rfqs.find((contract: any) => contract.contractId === rfqCid) as any;
+  if (!rfq) throw new Error(`could not find newly created RFQ ${rfqCid} in the active contracts`);
+  const onLedgerPolicy = rfq.createArgument.selectionPolicy;
   if (onLedgerPolicy !== SELECTION_POLICY) {
     throw new Error(`ledger stored policy ${onLedgerPolicy}, expected ${SELECTION_POLICY}`);
   }
