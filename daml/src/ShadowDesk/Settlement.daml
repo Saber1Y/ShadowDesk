@@ -33,6 +33,15 @@ template Deal
         assertMsg "Deal security must match the awarded quote" (award.assetToBuy == this.security.symbol)
         assertMsg "Deal settlement asset must match the awarded quote"
           (award.settlementAsset == this.settlementAsset.symbol)
+        case award.mandate of
+          None -> pure ()
+          Some mandateCid -> do
+            mandate <- fetch mandateCid
+            assertMsg "Deal amount exceeds the approved treasury mandate" (this.quantity <= mandate.maxAmount)
+            assertMsg "Deal price exceeds the approved treasury mandate" (this.unitPrice <= mandate.maxPrice)
+            assertMsg "Deal security exceeds the approved treasury mandate" (this.security.symbol == mandate.assetToBuy)
+            assertMsg "Deal settlement asset exceeds the approved treasury mandate"
+              (this.settlementAsset.symbol == mandate.settlementAsset)
         payment <- exercise paymentCid Read
         lockedSecurity <- exercise securityCid Read
         assertMsg "Security amount must match the deal" (lockedSecurity.quantity == this.quantity)
@@ -62,6 +71,7 @@ template Deal
           sealedQuote = this.sealedQuote
           bidId = award.bidId
           selectionPolicy = award.selectionPolicy
+          mandate = award.mandate
           settledAt = now
 
 template SettlementReceipt
@@ -77,6 +87,7 @@ template SettlementReceipt
     sealedQuote : ContractId SealedQuote
     bidId : Text
     selectionPolicy : SelectionPolicy
+    mandate : Optional (ContractId ApprovedMandate)
     settledAt : Time
   where
     signatory buyer

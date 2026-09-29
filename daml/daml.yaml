@@ -1,5 +1,5 @@
 sdk-version: 3.5.10
-name: shadowdesk-rfq-v2
+name: shadowdesk-treasury
 version: 1.0.0
 source: src
 dependencies:

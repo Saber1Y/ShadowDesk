@@ -1,9 +1,25 @@
-export const PACKAGE_NAME = "shadowdesk-rfq-v2";
-export const PACKAGE_ID = "6b2d3dfa528026be8a3c7446b8d5a995b771d90be42a7a8f7952a3065d68f6ae";
+export const PACKAGE_NAME = "shadowdesk-treasury";
+export const PACKAGE_ID = "50a21ee1be71aeae5c56c90db20491dd870004f1cd4fb47efcf7d3aa292d7c22";
 
 export type Party = string;
 
 export type SelectionPolicy = "LowestPriceThenBidId";
+
+export interface TreasuryMandate {
+  buyer: Party;
+  riskOfficer: Party;
+  approvedDealers: Party[];
+  assetToBuy: string;
+  settlementAsset: string;
+  maxAmount: string;
+  maxPrice: string;
+  reference: string;
+  expiry: string;
+}
+
+export interface ApprovedMandate extends TreasuryMandate {
+  approvedAt: string;
+}
 
 export interface AssetId {
   issuer: string;
@@ -20,6 +36,7 @@ export interface BlockTradeRFQ {
   selectionPolicy: SelectionPolicy;
   reference: string;
   expiry: string;
+  mandate: string | null;
 }
 
 export interface QuoteProposal {
@@ -83,6 +100,7 @@ export interface SettlementReceipt {
   sealedQuote: string;
   bidId: string;
   selectionPolicy: SelectionPolicy;
+  mandate: string | null;
   settledAt: string;
 }
 
@@ -90,6 +108,8 @@ export const TPL = {
   BlockTradeRFQ: `#${PACKAGE_NAME}:ShadowDesk.Rfq:BlockTradeRFQ`,
   QuoteProposal: `#${PACKAGE_NAME}:ShadowDesk.Rfq:QuoteProposal`,
   SealedQuote: `#${PACKAGE_NAME}:ShadowDesk.Rfq:SealedQuote`,
+  TreasuryMandate: `#${PACKAGE_NAME}:ShadowDesk.Rfq:TreasuryMandate`,
+  ApprovedMandate: `#${PACKAGE_NAME}:ShadowDesk.Rfq:ApprovedMandate`,
   Asset: `#${PACKAGE_NAME}:ShadowDesk.Asset:Asset`,
   Deal: `#${PACKAGE_NAME}:ShadowDesk.Settlement:Deal`,
   SettlementReceipt: `#${PACKAGE_NAME}:ShadowDesk.Settlement:SettlementReceipt`,

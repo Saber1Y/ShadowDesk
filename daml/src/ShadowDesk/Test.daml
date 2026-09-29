@@ -22,6 +22,65 @@ rfqTemplate buyer dealers expiry reference = BlockTradeRFQ with
   selectionPolicy = LowestPriceThenBidId
   reference = reference
   expiry = expiry
+  mandate = None
+
+createApprovedMandate : Party -> Party -> [Party] -> Time -> Script (ContractId ApprovedMandate)
+createApprovedMandate buyer riskOfficer dealers expiry = do
+  mandateCid <- submit (actAs [buyer, riskOfficer]) do
+    createCmd (TreasuryMandate with
+      buyer = buyer
+      riskOfficer = riskOfficer
+      approvedDealers = dealers
+      assetToBuy = "cTBILL"
+      settlementAsset = "cUSDC"
+      maxAmount = 1_000_000.0
+      maxPrice = 101.0
+      reference = "MANDATE-TEST"
+      expiry = expiry)
+  submit (actAs [buyer, riskOfficer]) do
+    exerciseCmd mandateCid Approve
+
+runMandatePolicyLifecycle : Script ()
+runMandatePolicyLifecycle = do
+  buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
+  dealer <- allocateParty "dealerA"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+  mandateCid <- createApprovedMandate buyer riskOfficer [dealer] expiry
+
+  submitMustFail buyer do
+    exerciseCmd mandateCid OpenRfq with
+      dealers = [dealer]
+      amount = 1_000_001.0
+      maxPrice = 101.0
+      reference = "RFQ-OVER-MANDATE"
+      expiry = expiry
+
+  rfqCid <- submit buyer do
+    exerciseCmd mandateCid OpenRfq with
+      dealers = [dealer]
+      amount = 1_000_000.0
+      maxPrice = 101.0
+      reference = "RFQ-MANDATED"
+      expiry = expiry
+
+  proposalCid <- submit dealer do
+    exerciseCmd rfqCid SubmitQuoteProposal with
+      dealer = dealer
+      offeredPrice = 100.5
+      bidId = "BID-MANDATED"
+
+  sealedCid <- submit buyer do
+    exerciseCmd proposalCid AcceptProposal with
+      maxPrice = 101.0
+
+  sealed <- queryContractId buyer sealedCid
+  let awarded = expectSome "Mandated award must exist" sealed
+  assertMsg "Mandated award carries the approved policy link" (awarded.mandate /= None)
+  assertMsg "Mandated award carries the approved amount" (awarded.amount == 1_000_000.0)
+  assertMsg "Mandated award carries the approved price cap" (awarded.maxPrice == 101.0)
 
 runPrivateRfqLifecycle : Script ()
 runPrivateRfqLifecycle = do

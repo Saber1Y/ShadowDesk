@@ -1,5 +1,5 @@
 import { CantonClient, envValue } from "../shared/client.js";
-import { TPL, type BlockTradeRFQ, type QuoteProposal, type Asset, type SelectionPolicy } from "../shared/types.js";
+import { TPL, type BlockTradeRFQ, type QuoteProposal, type Asset, type SelectionPolicy, type TreasuryMandate } from "../shared/types.js";
 import { CTBILL, CUSDC, type AssetIdSpec } from "../shared/config.js";
 
 export const SELECTION_POLICY: SelectionPolicy = "LowestPriceThenBidId";
@@ -12,6 +12,12 @@ export interface RfqSpec {
   maxPrice: number;
   dealers: string[];
   expiry: string;
+  mandate?: MandateSpec;
+}
+
+export interface MandateSpec {
+  riskOfficer: string;
+  maxAmount: number;
 }
 
 export interface RfqOverrides {
@@ -103,6 +109,7 @@ export class BuyerAgent {
 
   async createRfq(spec: RfqSpec): Promise<string> {
     if (!this.buyerParty) throw new Error("provision() first");
+    if (spec.mandate) return this.createMandatedRfq(spec);
     const tx = await this.client.create(
       "BlockTradeRFQ",
       {
@@ -124,6 +131,65 @@ export class BuyerAgent {
       if (created && created.templateId.endsWith(":ShadowDesk.Rfq:BlockTradeRFQ")) return created.contractId;
     }
     throw new Error("RFQ create produced no contract");
+  }
+
+  private async createMandatedRfq(spec: RfqSpec): Promise<string> {
+    const buyer = this.buyerParty;
+    if (!buyer) throw new Error("provision() first");
+    const mandate = spec.mandate!;
+    const mandateTx = await this.client.create(
+      "TreasuryMandate",
+      {
+        buyer,
+        riskOfficer: mandate.riskOfficer,
+        approvedDealers: spec.dealers,
+        assetToBuy: spec.assetToBuy.symbol,
+        settlementAsset: spec.settlementAsset.symbol,
+        maxAmount: String(mandate.maxAmount),
+        maxPrice: String(spec.maxPrice),
+        reference: `MANDATE-${spec.reference}`,
+        expiry: spec.expiry,
+      } satisfies TreasuryMandate,
+      [buyer, mandate.riskOfficer],
+      `cmd-create-mandate-${spec.reference}`,
+    );
+    const mandateCid = (mandateTx.transaction.events as any[])
+      .map((event) => event.CreatedEvent)
+      .find((event) => event?.templateId.endsWith(":ShadowDesk.Rfq:TreasuryMandate"))?.contractId;
+    if (!mandateCid) throw new Error("TreasuryMandate create produced no contract");
+
+    const approvalTx = await this.client.exercise(
+      "TreasuryMandate",
+      mandateCid,
+      "Approve",
+      {},
+      [buyer, mandate.riskOfficer],
+      `cmd-approve-mandate-${spec.reference}`,
+    );
+    const approvedCid = (approvalTx.transaction.events as any[])
+      .map((event) => event.CreatedEvent)
+      .find((event) => event?.templateId.endsWith(":ShadowDesk.Rfq:ApprovedMandate"))?.contractId;
+    if (!approvedCid) throw new Error("Approve produced no ApprovedMandate");
+
+    const rfqTx = await this.client.exercise(
+      "ApprovedMandate",
+      approvedCid,
+      "OpenRfq",
+      {
+        dealers: spec.dealers,
+        amount: String(spec.amount),
+        maxPrice: String(spec.maxPrice),
+        reference: spec.reference,
+        expiry: spec.expiry,
+      },
+      [buyer],
+      `cmd-open-mandated-rfq-${spec.reference}`,
+    );
+    const rfqCid = (rfqTx.transaction.events as any[])
+      .map((event) => event.CreatedEvent)
+      .find((event) => event?.templateId.endsWith(":ShadowDesk.Rfq:BlockTradeRFQ"))?.contractId;
+    if (!rfqCid) throw new Error("OpenRfq produced no BlockTradeRFQ");
+    return rfqCid;
   }
 
   async collectProposals(rfqCid: string, timeoutMs = 90_000): Promise<(QuoteReader & { _cid: string })[]> {

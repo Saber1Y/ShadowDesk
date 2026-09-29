@@ -4,6 +4,83 @@ data SelectionPolicy =
   LowestPriceThenBidId
   deriving (Eq, Show)
 
+template TreasuryMandate
+  with
+    buyer : Party
+    riskOfficer : Party
+    approvedDealers : [Party]
+    assetToBuy : Text
+    settlementAsset : Text
+    maxAmount : Decimal
+    maxPrice : Decimal
+    reference : Text
+    expiry : Time
+  where
+    signatory buyer, riskOfficer
+
+    choice Approve : ContractId ApprovedMandate
+      controller buyer, riskOfficer
+      do
+        now <- getTime
+        assertMsg "Treasury mandate has expired" (now < this.expiry)
+        assertMsg "Treasury mandate must approve at least one dealer" (this.approvedDealers /= [])
+        assertMsg "Treasury mandate amount must be positive" (this.maxAmount > 0.0)
+        assertMsg "Treasury mandate price must be positive" (this.maxPrice > 0.0)
+        create ApprovedMandate with
+          buyer = this.buyer
+          riskOfficer = this.riskOfficer
+          approvedDealers = this.approvedDealers
+          assetToBuy = this.assetToBuy
+          settlementAsset = this.settlementAsset
+          maxAmount = this.maxAmount
+          maxPrice = this.maxPrice
+          reference = this.reference
+          expiry = this.expiry
+          approvedAt = now
+
+template ApprovedMandate
+  with
+    buyer : Party
+    riskOfficer : Party
+    approvedDealers : [Party]
+    assetToBuy : Text
+    settlementAsset : Text
+    maxAmount : Decimal
+    maxPrice : Decimal
+    reference : Text
+    expiry : Time
+    approvedAt : Time
+  where
+    signatory buyer, riskOfficer
+
+    nonconsuming choice OpenRfq : ContractId BlockTradeRFQ
+      with
+        dealers : [Party]
+        amount : Decimal
+        maxPrice : Decimal
+        reference : Text
+        expiry : Time
+      controller buyer
+      do
+        now <- getTime
+        assertMsg "Treasury mandate has expired" (now < this.expiry)
+        assertMsg "RFQ amount exceeds the approved treasury mandate" (amount <= this.maxAmount)
+        assertMsg "RFQ max price exceeds the approved treasury mandate" (maxPrice <= this.maxPrice)
+        assertMsg "RFQ expiry exceeds the approved treasury mandate" (expiry <= this.expiry)
+        assertMsg "RFQ must invite only approved dealers" (all (\dealer -> dealer `elem` this.approvedDealers) dealers)
+        assertMsg "RFQ must invite at least one dealer" (dealers /= [])
+        create BlockTradeRFQ with
+          buyer = this.buyer
+          dealers = dealers
+          assetToBuy = this.assetToBuy
+          settlementAsset = this.settlementAsset
+          amount = amount
+          maxPrice = maxPrice
+          selectionPolicy = LowestPriceThenBidId
+          reference = reference
+          expiry = expiry
+          mandate = Some self
+
 template BlockTradeRFQ
   with
     buyer : Party
@@ -15,6 +92,7 @@ template BlockTradeRFQ
     selectionPolicy : SelectionPolicy
     reference : Text
     expiry : Time
+    mandate : Optional (ContractId ApprovedMandate)
   where
     signatory buyer
     observer dealers
@@ -74,6 +152,16 @@ template QuoteProposal
         assertMsg "RFQ buyer mismatch" (rfqRef.buyer == buyer)
         assertMsg "Award max price must match the RFQ" (maxPrice == rfqRef.maxPrice)
         assertMsg "Offered price exceeds buyer max price" (this.offeredPrice <= rfqRef.maxPrice)
+        case rfqRef.mandate of
+          None -> pure ()
+          Some mandateCid -> do
+            mandate <- fetch mandateCid
+            assertMsg "Award buyer does not match the approved mandate" (rfqRef.buyer == mandate.buyer)
+            assertMsg "Award asset exceeds the approved mandate" (rfqRef.assetToBuy == mandate.assetToBuy)
+            assertMsg "Award settlement asset exceeds the approved mandate" (rfqRef.settlementAsset == mandate.settlementAsset)
+            assertMsg "Award amount exceeds the approved treasury mandate" (rfqRef.amount <= mandate.maxAmount)
+            assertMsg "Award price exceeds the approved treasury mandate" (this.offeredPrice <= mandate.maxPrice)
+            assertMsg "Award expiry exceeds the approved treasury mandate" (rfqRef.expiry <= mandate.expiry)
         -- Consume the request so it can be awarded exactly once. A second
         -- acceptance, or a concurrent one, can no longer fetch the RFQ.
         archive this.rfq
@@ -91,6 +179,7 @@ template QuoteProposal
           bidId = this.bidId
           selectionPolicy = rfqRef.selectionPolicy
           expiry = this.expiry
+          mandate = rfqRef.mandate
 
     nonconsuming choice WithdrawProposal : ()
       controller dealer
@@ -112,5 +201,6 @@ template SealedQuote
     bidId : Text
     selectionPolicy : SelectionPolicy
     expiry : Time
+    mandate : Optional (ContractId ApprovedMandate)
   where
     signatory buyer, dealer

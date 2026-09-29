@@ -33,6 +33,8 @@ const main = async () => {
   const buyer = new BuyerAgent(P1.jsonApi, P1.name);
   const buyerParty = await buyer.provision();
   console.log(`[buyer] party=${buyerParty}`);
+  const riskOfficerParty = await buyer.client.ensureParty("riskOfficer");
+  console.log(`[risk] party=${riskOfficerParty}`);
 
   const assetToBuy = assetFromEnv("SHADOWDESK_ASSET_TO_BUY", CTBILL);
   const settlementAsset = assetFromEnv("SHADOWDESK_SETTLEMENT_ASSET", CUSDC);
@@ -64,6 +66,10 @@ const main = async () => {
   );
 
   const spec = defaultRfq(dealers.length, dealers.map((d) => d.dealerParty!), overrides);
+  spec.mandate = {
+    riskOfficer: riskOfficerParty,
+    maxAmount: numberFromEnv("SHADOWDESK_MANDATE_MAX_AMOUNT") ?? spec.amount,
+  };
   const cashCid = await buyer.ensureCash(settlementAsset, Math.ceil(spec.amount * spec.maxPrice * 2));
   console.log(`[buyer] cash=${cashCid.slice(0, 16)}...`);
 
