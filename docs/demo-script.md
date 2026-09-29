@@ -4,16 +4,18 @@ Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environ
 
 ## 1. The problem (0:40)
 
-> "Hedge funds can't buy a block of tokenized T-bills without moving the market. Their size is a signal - it reveals strategy and invites front-running."
+> "A treasury agent should not be able to trade outside the fund's approved mandate. The fund needs both private price competition and an on-ledger risk boundary."
 
 - Point at the hero: "A fund places a block. Two dealers price it blind."
 - Explain: public blockchains expose who buys, how much, and at what price. Institutions need a venue where price competition happens without anyone seeing a competitor's price.
 
-## 2. The venue (0:30)
+## 2. The mandate (0:40)
 
-> "ShadowDesk is a private RFQ venue on the Canton Network. The fund invites only approved dealers, they price blind, and the best price settles atomically."
+> "ShadowDesk turns a buyer and risk officer's mandate into constrained execution. The mandate controls the dealers, assets, amount, maximum price, and expiry before any RFQ opens."
 
 - Hit **Institutional** - the buyer view.
+- Show the buyer and risk officer approval step before the RFQ is opened.
+- Show the mandate limits and explain that they are checked again during award and settlement.
 - Show the buyer party, holdings (cTBILL block, cUSDC spent), and the live RFQ: 1,000,000 cTBILL, max price 101, two invited dealers.
 - Before running another round, show the **Trade request** controls: security, settlement instrument, amount, and maximum price.
 - Explain that the local demo defaults to `cTBILL` and `cUSDC`, while the UI also accepts other local wrapped `Asset` symbols.
@@ -21,7 +23,7 @@ Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environ
 
 ## 3. Registration and quotes (0:40)
 
-> "Each dealer is on its own Canton participant - dealer A on participant one, dealer B on participant two - and both price the same block."
+> "The approved mandate opens a private RFQ to two liquidity providers. Each dealer is on its own Canton participant and both price the same block."
 
 - Show the RFQ terms: size, max price, settle-in, invited dealers (all visible to both dealers because they were invited).
 - Explain both dealer agents received the RFQ on their own participants and submitted prices independently.
@@ -65,6 +67,6 @@ Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environ
 > "If you're not a party to a trade, you see the metadata the venue publishes - that a settlement happened - but never the prices, the identities beyond the metadata, or the payloads."
 
 - Show the public projection terminal: color-coded event log with payload-sensitivity tags (PUBLIC METADATA vs PRIVATE).
-- Close: "Blind pricing, atomic settlement, and a confidentiality boundary enforced by the ledger - not by an app layer. ShadowDesk."
+- Close: "ShadowDesk is not just a private RFQ. It is a treasury policy boundary that constrains an execution agent, preserves blind pricing, and settles atomically on Canton."
 
 Total: ~5 minutes.

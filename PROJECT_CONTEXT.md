@@ -10,24 +10,24 @@ Read this file before changing architecture, contract visibility, settlement log
 
 - Repository state: git repo initialized at workspace root (branch `main`, remote origin `https://github.com/Saber1Y/ShadowDesk`), Daml package scaffolded at `/Users/mac/codes/Shadow Desk/daml`, TypeScript agents in `agents/`, Next.js dashboard in `frontend/`; runtime artifacts (node_modules, .daml, log/, .next) gitignored. History committed per logical file/unit; dashboard rebranded to the official Canton palette (yellow `#F3FF97`, black `#030206`, white `#FFFFFC`, lilac `#D5A5E3`, purple `#875CFF`, taupe `#A89F91`) with a segmented C-ring mark + `app/icon.svg` favicon.
 - Implementation state: privacy templates compiling, agent services live, dashboard live.
-- Daml state: package `shadowdesk-rfq-v2` 1.0.0 builds to `.daml/dist/shadowdesk-rfq-v2-1.0.0.dar` (package id `6b2d3dfa528026be8a3c7446b8d5a995b771d90be42a7a8f7952a3065d68f6ae`); `dpm test` passes nine scenarios plus `noop`.
+- Daml state: the next package is `shadowdesk-treasury` 1.0.0 and builds to `.daml/dist/shadowdesk-treasury-1.0.0.dar` (current package id `50a21ee1be71aeae5c56c90db20491dd870004f1cd4fb47efcf7d3aa292d7c22`); `dpm test` passes ten scenarios plus `noop`, including the approved-mandate lifecycle.
 - Canton state: local Canton 3.5.17 sandbox validated. `dpm sandbox` starts a full single-process network; Ledger API gRPC on 127.0.0.1:6865, HTTP on 6864. Party store persists per-node between runs; readiness must be keyed on the log line `Canton sandbox is ready.`, not on the port.
 - Multi-participant state: `dpm sandbox -c daml/distributed-run.conf` brings up a second participant `participant2` (Ledger API gRPC 18001, admin 18002, HTTP 18003) on the same synchronizer, auto-connected. Cross-participant privacy and settlement proven live via `participants.json`/`participants-p2.json` runner configs (default participant hosts the DAR upload; `--upload-dar=true` uploads only to the default participant, so DAR must be uploaded once per participant).
 - Agent state: buyer/dealer/dealer agent services scaffolded in `/Users/mac/codes/Shadow Desk/agents` (TypeScript + Node, JSON Ledger API v2). Waits proven live end-to-end across both participants: buyer creates RFQ, both dealers quote from their own participant, buyer deterministically selects the winner within maxPrice, seals the quote, and DvP settles atomically on participant1. The losing dealer on participant2 sees zero of the winner's quotes (asserted in the demo run).
 - Frontend state: Next.js 15 (App Router, Tailwind v4, Motion, lucide) dashboard in `/Users/mac/codes/Shadow Desk/frontend`. Live command-center console UI: floating pill nav, dot-grid dark studio, lime accent, mono micro-labels. Two tabs: Public projection (sanitized execution-ledger metadata + cross-participant privacy banner) and Institutional (buyer view: holdings, live RFQ, independent quotes with sealed/lost states, settled DvP receipt). A "Run round" button streams the real two-participant agent run into a terminal console and the projections update live from actual ledger queries. Server-side projections read the JSON API on both participants; the browser never touches a participant directly.
-- Settlement state: two-leg atomic DvP implemented. `Deal` template (signatory buyer+dealer) with `Settle` choice performs validated payment-for-security exchange in one transaction; `SettlementReceipt` issued. Guards: expiry, exact security quantity, settlement-asset match, payment coverage, and agreement with the awarded `SealedQuote` (buyer, dealer, price, size, and both instruments). Both legs verify from ledger results in tests. The receipt records the originating RFQ, the sealed quote, the winning bid id, and the selection policy, so the award is traceable on-ledger.
+- Settlement state: two-leg atomic DvP implemented. `Deal` template (signatory buyer+dealer) with `Settle` choice performs validated payment-for-security exchange in one transaction; `SettlementReceipt` issued. Guards: expiry, exact security quantity, settlement-asset match, payment coverage, agreement with the awarded `SealedQuote`, and approved-mandate amount, price, and asset limits. Both legs verify from ledger results in tests. The receipt records the originating RFQ, the sealed quote, the mandate, the winning bid id, and the selection policy, so policy-to-award-to-settlement is traceable on-ledger.
 - Selection state: each `BlockTradeRFQ` declares a `SelectionPolicy` (`LowestPriceThenBidId`) that the sealed quote inherits. The buyer agent still ranks proposals client-side, because Daml cannot enumerate every proposal contract to compute a global minimum, and the ledger enforces only that settlement matches the award. A request is awarded at most once: `AcceptProposal` consumes the RFQ, so a second or concurrent acceptance can no longer resolve it. The sealed quote therefore also records the request's reference, max price, and invited dealers, which keeps the awarded round reconstructable after the RFQ is archived and lets the dashboard show it as `AWARDED` instead of `OPEN`. The ledger does not check that the buyer chose the cheapest quote; that remains a buyer-side duty.
-- Deployment state: package `shadowdesk-rfq-v2` 1.0.0 is built and Daml-tested locally but not uploaded to DevNet. The same-name 1.1.1 upload was rejected as `NOT_VALID_UPGRADE_PACKAGE` because the 1.0.0 schema has a choice and template fields that the new schema removed/changed. Package `shadowdesk-rfq` 1.1.0 (`f3655cf...`) remains registered but unvetted; live DevNet state still contains 1.0.0 (`6cf7d6a6...`). Upload and request vetting for the new package name and ID above. `scripts/localnet/run-demo.sh` derives the DAR filename from `daml/daml.yaml`.
-- Verification state: `dpm test` passes nine Daml scenarios plus `noop`, including a regression test that prevents overriding the max price via the award command. Agent typecheck passes with the 1.1.1 package id. The full agent E2E and two-participant demo were previously verified against the 1.1.0 source before this security fix; re-run them against 1.1.1 after deployment.
+- Deployment state: package `shadowdesk-treasury` 1.0.0 is built and Daml-tested locally but not uploaded to DevNet. It is intentionally a fresh package name because the mandate fields and choices are a schema change. `scripts/localnet/run-demo.sh` derives the DAR filename from `daml/daml.yaml`.
+- Verification state: `dpm test` passes ten Daml scenarios plus `noop`, including the mandate approval, mandate limit rejection, and max-price regression tests. Agent typecheck passes with the treasury package id. The next required verification is the two-participant demo against the new DAR, followed by DevNet upload and vetting.
 - Planning state: product concept, MVP requirements, and phase plan are documented.
 
 ## Product Decision
 
-ShadowDesk will be presented as a private institutional RFQ and delivery-versus-payment prototype.
+ShadowDesk will be presented as a policy-controlled treasury execution layer for institutional rebalancing.
 
 The project will prove protocol-enforced privacy and real Canton settlement before adding advanced AI behavior.
 
-The first demo will use one buyer, two dealers, one RFQ, two quotes, one accepted quote, and one settlement.
+The first demo will use one buyer, one risk officer, two dealers, one approved mandate, one RFQ, two quotes, one accepted quote, and one settlement.
 
 ## Real-World Product Story
 
@@ -35,11 +35,11 @@ The primary use case is an institutional fund purchasing a large block of tokeni
 
 The fund manager wants competitive dealer pricing but does not want to publish the order size or reveal the accumulation strategy.
 
-The buyer agent privately invites approved market makers.
+The buyer and risk officer approve a mandate that limits the dealers, assets, amount, price, and expiry before the buyer agent can open an RFQ.
 
 Each dealer sees the RFQ terms required to price the trade, but competing dealers do not see one another's quotes.
 
-The buyer agent applies deterministic price, slippage, expiry, and dealer-policy checks before accepting the best quote.
+The buyer agent applies deterministic price, expiry, and dealer-policy checks before accepting the best quote, while the ledger independently enforces the approved mandate limits.
 
 The selected quote triggers atomic delivery-versus-payment using the asset mechanism available on the Canton environment.
 

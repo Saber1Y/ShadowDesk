@@ -1,22 +1,24 @@
 # ShadowDesk
 
-A private institutional RFQ and atomic delivery-versus-payment venue, built on the Canton Network.
+A policy-controlled treasury execution layer for institutional rebalancing, built on the Canton Network.
 
-An institutional fund wants to buy a large block of an asset without moving the market. ShadowDesk invites a small set of dealers, collects their prices **blind** (no dealer sees another dealer's price), picks the best price within the fund's limit, and settles the trade atomically - delivery of the asset and payment of the proceeds exchange in one ledger transaction.
+An institutional treasury needs to rebalance without giving an execution agent unlimited discretion. ShadowDesk records a buyer mandate approved by the buyer and a risk officer, constrains the allowed dealers, assets, amount, price, and expiry, then opens a private RFQ and settles the approved trade atomically.
 
 ## What is proven
 
 - **Quote secrecy.** Competing dealers never see each other's prices. Each `QuoteProposal` is signatory to one dealer and observed only by the buyer; a losing dealer on another participant sees **zero** of the winner's quotes on the shared synchronizer.
 - **Atomic DvP.** The `Deal` contract exchanges asset for payment in a single `Settle` step: the buyer receives the security and the winning dealer receives payment atomically, or neither happens.
+- **Mandate enforcement.** `TreasuryMandate` requires buyer and risk-officer approval. `ApprovedMandate` constrains RFQ opening and is carried through the sealed quote and settlement receipt.
 - **Live federation.** Two Canton participants on one synchronizer run real buyer and dealer agents; the dashboard is a live projection of actual ledger state, not a mock.
 
 ## How it works
 
-1. The **buyer agent** creates a `BlockTradeRFQ` for a block size, a max price, a list of invited dealers, and the award rule to apply.
-2. Each **dealer agent** submits one `QuoteProposal` with its own price and bid id. A dealer sees only its own proposals, never the others.
-3. When the buyer's collection window closes, the buyer agent picks the deterministic winner using the rule the RFQ declared: lowest price within the max-price limit, ties broken by bid id.
-4. The buyer `AcceptProposal`s the winning quote into a `SealedQuote` - now binding on both parties, and carrying the rule it was awarded under. Awarding consumes the RFQ, so a request can be awarded at most once; a second or concurrent acceptance cannot resolve the RFQ and fails. Because the RFQ is then gone from the active contract set, the sealed quote also records the request's reference, max price, and invited dealers so the awarded round stays fully reconstructable.
-5. Both parties authorize the `Deal` against that `SealedQuote`, then `Settle` runs DvP atomically: the buyer's locked security becomes the buyer's, and the dealer's payment asset becomes the dealer's. The ledger rejects any `Deal` that does not match the awarded quote, and a `SettlementReceipt` records the trade together with the RFQ, winning bid id, and selection policy.
+1. The **buyer and risk officer** approve a `TreasuryMandate` with the allowed dealers, assets, maximum amount, maximum price, reference, and expiry.
+2. The **buyer agent** opens a `BlockTradeRFQ` from the approved mandate. The ledger rejects RFQs that exceed the mandate.
+3. Each **dealer agent** submits one `QuoteProposal` with its own price and bid id. A dealer sees only its own proposals, never the others.
+4. When the buyer's collection window closes, the buyer agent picks the deterministic winner using the rule the RFQ declared: lowest price within the mandate limit, ties broken by bid id.
+5. The buyer `AcceptProposal`s the winning quote into a `SealedQuote` - now binding on both parties, carrying the approved mandate link and the rule it was awarded under. Awarding consumes the RFQ, so a request can be awarded at most once.
+6. Both parties authorize the `Deal` against that `SealedQuote`, then `Settle` runs DvP atomically. Settlement rechecks the mandate limits and writes a `SettlementReceipt` linking the trade to the mandate, RFQ, winning bid, and selection policy.
 
 Each step's authorization and visibility is enforced by the Daml contract templates, not by the agents.
 
@@ -61,11 +63,11 @@ dpm sandbox -c distributed-run.conf &
 # wait for "Canton sandbox is ready." in the log, then confirm both JSON APIs answer
 
 # 2. Upload the DAR to each participant
-dpm script --participant-config participants.json     --dar .daml/dist/shadowdesk-rfq-1.0.0.dar --upload-dar=true --script-name ShadowDesk.Test:noop
-dpm script --participant-config participants-p2.json  --dar .daml/dist/shadowdesk-rfq-1.0.0.dar --upload-dar=true --script-name ShadowDesk.Test:noop
+dpm script --participant-config participants.json     --dar .daml/dist/shadowdesk-treasury-1.0.0.dar --upload-dar=true --script-name ShadowDesk.Test:noop
+dpm script --participant-config participants-p2.json  --dar .daml/dist/shadowdesk-treasury-1.0.0.dar --upload-dar=true --script-name ShadowDesk.Test:noop
 
 # 3. Rebuild the DAR if a Daml source changed (fast, deterministic)
-dpm build -o .daml/dist/shadowdesk-rfq-1.0.0.dar
+dpm build -o .daml/dist/shadowdesk-treasury-1.0.0.dar
 
 # 4. Run the agents demo
 cd ../agents
@@ -98,7 +100,7 @@ When one of them is configured, the header shows a server-token badge instead of
 
 A DevNet round is gated on a signed-in session and a configured party for each role, not on a hard disable.
 It settles the same locally seeded `ShadowDesk.Asset` contracts as the local round, so it is not a registry-backed settlement.
-Command submission additionally requires the active `shadowdesk-rfq` package to be vetted by the shared node's validator; an uploaded but unvetted package is rejected.
+Command submission additionally requires the active `shadowdesk-treasury` package to be vetted by the shared node's validator; an uploaded but unvetted package is rejected.
 The authenticated DevNet status view can read the configured party projections.
 
 ## What happens during the agents demo
@@ -137,7 +139,7 @@ cd frontend && npm run typecheck
 cd frontend && npm run build
 ```
 
-`cd agents && npm run e2e:award-chain` exercises the award chain against a real single-node ledger and needs no Docker: start one with `cd daml && dpm sandbox --dar .daml/dist/shadowdesk-rfq-v2-1.0.0.dar`. It creates an RFQ, quotes, seals, settles, and asserts that a `Deal` which disagrees with the awarded quote is rejected without moving the security.
+`cd agents && npm run e2e:award-chain` exercises the award chain against a real single-node ledger and needs no Docker: start one with `cd daml && dpm sandbox --dar .daml/dist/shadowdesk-treasury-1.0.0.dar`. It creates an RFQ, quotes, seals, settles, and asserts that a `Deal` which disagrees with the approved mandate or awarded quote is rejected without moving the security.
 
 The live UI flow can be checked at `http://localhost:3001` after the localnet bootstrap.
 Verify both participants are live, run a custom RFQ, confirm the requested amount and instruments in the Institutional view, and confirm the privacy result reports zero winner quotes to the losing dealer.
@@ -151,6 +153,7 @@ For a repeatable API/UI smoke check without resetting the ledger, run `./scripts
 - **Settlement party topology.** Cross-participant `actAs` submission is rejected by the script runner, so the winning dealer in the demo is co-hosted on participant1 where the `Deal`/`Settle` executes. Quote secrecy across participants is unaffected and is proven independently.
 - **Fixed selection policy.** Each RFQ declares its award rule on-ledger (`LowestPriceThenBidId`). The buyer agent ranks proposals with that same rule, and the settlement receipt records which rule and bid id produced the award. The ranking itself still runs client-side, because Daml cannot enumerate every proposal contract to compute a global minimum. Additional policies and bilateral negotiation are future extensions.
 - **Buyer is the awarder.** The contract enforces that an award matches a real dealer-signed proposal and that a request yields at most one award, but it does not check that the buyer picked the *cheapest* quote. Enforcing the global minimum would need the ledger to see all proposals at once, which the current authorization model does not allow.
+- **Treasury mandate scope.** The current mandate constrains one RFQ round. A future version will track cumulative spend and remaining allocation across multiple settlements.
 
 ## Submission pack
 

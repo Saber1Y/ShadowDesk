@@ -2,9 +2,9 @@
 
 ## What it is
 
-ShadowDesk is a private institutional RFQ (request-for-quote) venue on the Canton Network for large block trades of tokenized assets.
+ShadowDesk is a policy-controlled treasury execution layer on the Canton Network for institutional rebalancing of tokenized assets.
 
-Institutional funds avoid the public order book when building large positions, because size reveals strategy and invites front-running. Today those blocks are sourced by phone and email. ShadowDesk moves the whole workflow - private invite, blind competitive pricing, and settlement - onto Canton, where the confidentiality boundary is enforced by the ledger's contract stakeholders and participant privacy rather than by an application layer.
+Institutional funds need competitive execution without giving an agent unlimited discretion. Today treasury instructions, dealer quotes, risk approval, and settlement are split across email, trading terminals, and operations systems. ShadowDesk records the buyer mandate and risk approval on Canton, then constrains private dealer execution and settlement against that policy.
 
 ## The problem
 
@@ -18,11 +18,12 @@ Regulated institutions need a venue where price competition happens without any 
 
 ## How ShadowDesk solves it
 
-1. The fund's buyer agent creates a private `BlockTradeRFQ` with a max price, inviting only approved dealers.
-2. Each dealer agent submits a `QuoteProposal` - signatory to that dealer alone, observed only by the buyer. No dealer sees a competitor's price.
-3. The buyer agent selects the best executable quote (lowest in-limit price) and seals it into a binding `SealedQuote`.
-4. `Deal` and `Settle` perform atomic delivery-versus-payment: the fund receives the asset and the dealer receives payment in one Canton transaction, or neither happens.
-5. A `SettlementReceipt` gives both parties a private audit record. The wider network sees no order book, no competing prices, and no fund identity.
+1. The buyer and risk officer approve a `TreasuryMandate` with approved dealers, assets, maximum amount, maximum price, and expiry.
+2. The buyer agent opens a private `BlockTradeRFQ` from the approved mandate. The ledger rejects requests outside policy.
+3. Each dealer agent submits a `QuoteProposal` - signatory to that dealer alone, observed only by the buyer. No dealer sees a competitor's price.
+4. The buyer agent selects the best executable quote and seals it into a binding `SealedQuote` linked to the approved mandate.
+5. `Deal` and `Settle` perform atomic delivery-versus-payment and recheck the mandate limits before moving either asset.
+6. A `SettlementReceipt` links the mandate, RFQ, sealed quote, winning bid, and settlement result for private audit.
 
 Privacy is proven, not promised: the demo asserts on the live ledger that a losing dealer on a separate participant observes **zero** of the winner's quotes, and the dashboard surfaces that check continuously.
 
@@ -36,7 +37,7 @@ Privacy is proven, not promised: the demo asserts on the live ledger that a losi
 
 | Pain today | ShadowDesk outcome |
 | --- | --- |
-| Blocks sourced by phone/email, leaky and slow | Structured, private RFQ with competitive blind pricing |
+| Treasury policy scattered across systems | Mandate-controlled execution with on-ledger limits |
 | Dealers can infer each other's pricing | Prices visible only to buyer + quoting dealer |
 | Settlement risk between separate systems | Atomic DvP in one ledger transaction |
 | Platform can see your flow | Confidentiality enforced at the contract layer |
@@ -49,6 +50,6 @@ A working three-week-built MVP: Daml contract templates, buyer/dealer agent serv
 
 ## Ask
 
-- Pilot with one asset manager and two liquidity providers on the Canton DevNet, using the CIP-025-style asset standard once available.
+- Pilot with one asset manager, one risk officer, and two liquidity providers on the Canton DevNet, using the Canton Token Standard.
 - Two weeks: DevNet deployment with a real asset registry, three dealers, and an auditor view.
 - Add a compliance/audit party and RFQ amendment workflow for the regulated-fund sales cycle.

@@ -2,13 +2,15 @@
 
 ## Objective
 
-Run ShadowDesk with one buying institution and two liquidity providers for a bounded, low-notional pilot of private block trading of tokenized short-term government securities on the Canton DevNet, with all confidentiality and settlement claims evidenced end-to-end.
+Run ShadowDesk with one buying institution, one risk officer, and two liquidity providers for a bounded, low-notional pilot of mandate-controlled treasury rebalancing on the Canton DevNet, with policy, confidentiality, and settlement claims evidenced end-to-end.
 
 ## Scope
 
 In scope:
 
-- Private RFQ with up to three invited dealers.
+- Buyer and risk-officer approval of an on-ledger treasury mandate.
+- Private RFQ with up to three dealers approved by the mandate.
+- Mandate enforcement for assets, amount, maximum price, and expiry.
 - Blind quote collection, deterministic winner selection within the buyer's max-price limit.
 - Atomic DvP settlement on a Canton asset standard (NameService / CIP-025-style registry once available on DevNet).
 - Institutional (buyer) projection plus a public metadata-only projection and an auditor view.
@@ -35,7 +37,7 @@ In the hackathon demo the winner is co-hosted on participant1 because the Daml s
 
 ## Success criteria and metrics
 
-Primary: a judge- and operator-visible, end-to-end private RFQ that settles atomically on Canton.
+Primary: a judge- and operator-visible, end-to-end treasury mandate that constrains a private RFQ and settles atomically on Canton.
 
 | Metric | Target | How measured |
 | --- | --- | --- |
