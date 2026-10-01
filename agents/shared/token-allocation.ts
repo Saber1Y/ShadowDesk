@@ -258,18 +258,18 @@ export const listAllocationLegs = async (
 };
 
 /**
- * Execute every leg of a settlement in one Ledger API transaction.
+ * Ask the registry to mint a transfer context for each leg and build the
+ * matching ExerciseCommand list.
  *
- * All legs move together or none do, which is the atomicity property the whole
- * product rests on. Authorization must cover the executor plus every leg sender
- * and receiver: the registry mints a transfer context per leg and the holders
- * must each consent.
+ * This is separated from submission because a real settlement has to commit
+ * these commands in the same transaction as the ShadowDesk receipt, and the
+ * receipt command comes from a different package. Daml cannot observe a
+ * registry transfer, so the shared transaction is the whole atomicity argument.
  */
-export const executeAllocationsAtomically = async (
-  client: CantonClient,
+export const buildAllocationTransferCommands = async (
   legs: AllocationLeg[],
   options: { executor: string },
-): Promise<{ eventCount: number }> => {
+): Promise<{ commands: unknown[]; disclosedContracts: unknown[]; actAs: string[] }> => {
   if (legs.length === 0) throw new Error("no allocation legs to execute");
 
   const disclosedById = new Map<string, unknown>();
@@ -301,16 +301,83 @@ export const executeAllocationsAtomically = async (
     new Set([options.executor, ...legs.flatMap((leg) => [leg.sender, leg.receiver])]),
   );
 
+  return { commands, disclosedContracts: [...disclosedById.values()], actAs };
+};
+
+/**
+ * Execute every leg of a settlement in one Ledger API transaction.
+ *
+ * All legs move together or none do, which is the atomicity property the whole
+ * product rests on. Authorization must cover the executor plus every leg sender
+ * and receiver: the registry mints a transfer context per leg and the holders
+ * must each consent.
+ */
+export const executeAllocationsAtomically = async (
+  client: CantonClient,
+  legs: AllocationLeg[],
+  options: { executor: string },
+): Promise<{ eventCount: number }> => {
+  const { commands, disclosedContracts, actAs } = await buildAllocationTransferCommands(legs, options);
+
   const tx = await client.submitMany(
     commands,
     actAs,
-    { disclosedContracts: [...disclosedById.values()], packageIdSelectionPreference: null },
+    { disclosedContracts, packageIdSelectionPreference: null },
     randomUUID(),
   );
   return { eventCount: tx.transaction?.events?.length ?? 0 };
 };
 
-/** Convenience: create both legs of a settlement under one reference. */
+/**
+ * Look up specific allocation contracts by id, across every party that can see
+ * them.
+ *
+ * A settlement must execute the exact allocations its plan pinned. Resolving
+ * them by id rather than trusting a caller's list is what prevents the agent
+ * from substituting a different leg at execution time.
+ */
+export const findAllocationLegsByCid = async (
+  client: CantonClient,
+  parties: string[],
+  contractIds: string[],
+  options: { allocationInterface?: string; registryUrl?: string } = {},
+): Promise<Map<string, AllocationLeg>> => {
+  const wanted = new Set(contractIds);
+  if (wanted.size === 0) return new Map();
+
+  const offset = await client.ledgerEnd();
+  const found = new Map<string, AllocationLeg>();
+  for (const party of parties) {
+    const rows = await client.queryByInterface(
+      party,
+      options.allocationInterface ?? FALLBACK_INTERFACES.allocation,
+      offset,
+      { includeCreatedEventBlob: true },
+    );
+    for (const row of rows) {
+      if (!wanted.has(row.contractId) || found.has(row.contractId)) continue;
+      const allocation = (row.viewValue as any)?.allocation;
+      const leg = allocation?.transferLeg;
+      if (!leg) continue;
+      found.set(row.contractId, {
+        contractId: row.contractId,
+        templateId: row.templateId,
+        legId: allocation.transferLegId,
+        instrumentId: leg.instrumentId.id,
+        admin: leg.instrumentId.admin,
+        sender: leg.sender,
+        receiver: leg.receiver,
+        amount: leg.amount,
+        registryUrl: options.registryUrl,
+      });
+    }
+  }
+  return found;
+};
+
+/**
+ * Convenience: create both legs of a settlement under one reference.
+ */
 export const createDvpLegs = async (
   client: CantonClient,
   request: DvpRequest,

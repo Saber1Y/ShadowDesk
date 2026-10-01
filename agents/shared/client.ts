@@ -368,4 +368,23 @@ export const extractCreatedBytes = (tx: TransactionResponse, suffix: string): { 
   return { cid: ev.contractId, arg: ev.createArgument };
 };
 
+/**
+ * Find a created contract by module-qualified template suffix.
+ *
+ * The ledger reports template ids keyed by package hash, so a template id built
+ * from the package name (`#shadowdesk-treasury-v2:...`) never equals what comes
+ * back. Matching on the suffix is what actually holds across uploads.
+ */
+export const findCreatedByTemplate = (
+  tx: TransactionResponse | null | undefined,
+  moduleQualifiedSuffix: string,
+): { cid: string; arg: any } | null => {
+  const ev = (tx?.transaction?.events ?? [])
+    .map((e: any) => e.CreatedEvent)
+    .filter(Boolean)
+    .find((e: any) => typeof e.templateId === "string" && e.templateId.endsWith(moduleQualifiedSuffix));
+  if (!ev) return null;
+  return { cid: ev.contractId, arg: ev.createArgument };
+};
+
 export const decimal = (n: number): string => n.toFixed(0);

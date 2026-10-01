@@ -117,6 +117,90 @@ export const TPL = {
 
 export type TemplateKey = keyof typeof TPL;
 
+/**
+ * V2 settles real Token Standard instruments. It is a separate package because
+ * InstrumentId replaces the synthetic symbol pair, and a changed template cannot
+ * be replaced in place on a ledger.
+ */
+export const PACKAGE_NAME_V2 = "shadowdesk-treasury-v2";
+export const PACKAGE_ID_V2 =
+  "9e41d0b5b46ea3b63775e6e6c9f9dde5b4ce08a5280f9e721c6dd093a427a5fd";
+
+export const TPL_V2 = {
+  TreasuryMandate: `#${PACKAGE_NAME_V2}:ShadowDesk.V2.Rfq:TreasuryMandate`,
+  ApprovedMandate: `#${PACKAGE_NAME_V2}:ShadowDesk.V2.Rfq:ApprovedMandate`,
+  BlockTradeRFQ: `#${PACKAGE_NAME_V2}:ShadowDesk.V2.Rfq:BlockTradeRFQ`,
+  QuoteProposal: `#${PACKAGE_NAME_V2}:ShadowDesk.V2.Rfq:QuoteProposal`,
+  SealedQuote: `#${PACKAGE_NAME_V2}:ShadowDesk.V2.Rfq:SealedQuote`,
+  SettlementPlan: `#${PACKAGE_NAME_V2}:ShadowDesk.V2.Settlement:SettlementPlan`,
+  SettlementReceipt: `#${PACKAGE_NAME_V2}:ShadowDesk.V2.Settlement:SettlementReceipt`,
+} as const;
+
+export type TemplateKeyV2 = keyof typeof TPL_V2;
+
+/**
+ * A registry instrument is an id together with the admin party that issued it.
+ * Binding the admin is what stops a second issuer reusing the same id.
+ */
+export interface RegistryInstrumentId {
+  id: string;
+  admin: Party;
+}
+
+export type LegRole = "SecurityLeg" | "PaymentLeg";
+
+/**
+ * The registry allocation a settlement leg will execute. Allocation contracts
+ * live outside this package, so Daml cannot fetch them and the id is text.
+ */
+export interface AllocationLegRef {
+  role: LegRole;
+  allocationCid: string;
+  instrument: RegistryInstrumentId;
+  sender: Party;
+  receiver: Party;
+  amount: string;
+}
+
+export interface SettlementPlanV2 {
+  reference: string;
+  buyer: Party;
+  dealer: Party;
+  executor: Party;
+  securityInstrument: RegistryInstrumentId;
+  settlementInstrument: RegistryInstrumentId;
+  quantity: string;
+  unitPrice: string;
+  securityLeg: AllocationLegRef;
+  paymentLeg: AllocationLegRef;
+  sealedQuote: string;
+  expiry: string;
+}
+
+/**
+ * Only the buyer is a signatory, so the receipt stays buyer-visible and the
+ * seller's ledger never holds a copy of it.
+ */
+export interface SettlementReceiptV2 {
+  reference: string;
+  buyer: Party;
+  dealer: Party;
+  executor: Party;
+  securityInstrument: RegistryInstrumentId;
+  settlementInstrument: RegistryInstrumentId;
+  quantity: string;
+  unitPrice: string;
+  totalValue: string;
+  securityAllocationCid: string;
+  paymentAllocationCid: string;
+  rfq: string;
+  sealedQuote: string;
+  bidId: string;
+  selectionPolicy: SelectionPolicy;
+  mandate: string | null;
+  settledAt: string;
+}
+
 export const suffixOf = (templateId: string) => templateId.split(":").slice(1).join(":");
 
 export interface CreatedEvent {
