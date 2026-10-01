@@ -1,0 +1,164 @@
+module ShadowDesk.V2.Settlement where
+
+import ShadowDesk.V2.Rfq
+
+-- The role a transfer leg plays in the settlement. Using a variant rather than
+-- text means a leg cannot be recorded as the wrong side of the trade.
+data LegRole =
+  SecurityLeg
+  | PaymentLeg
+  deriving (Eq, Show)
+
+-- A reference to a Token Standard allocation contract.
+--
+-- Allocation contracts live in a registry package that Daml cannot fetch, so the
+-- identifier is text rather than a ContractId. The leg records what the
+-- registry was instructed to move and which ledger contract was created for it.
+data AllocationLegRef = AllocationLegRef
+  with
+    role : LegRole
+    allocationCid : Text
+    instrument : InstrumentId
+    sender : Party
+    receiver : Party
+    amount : Decimal
+  deriving (Eq, Show)
+
+-- The pre-agreed shape of a real-token settlement.
+--
+-- Nothing here moves tokens. The plan is the authorization record: it pins the
+-- two registry allocations that will be executed, and the parties confirm the
+-- deal matches the awarded quote and the approved treasury mandate before a
+-- receipt can exist.
+template SettlementPlan
+  with
+    reference : Text
+    buyer : Party
+    dealer : Party
+    executor : Party
+    securityInstrument : InstrumentId
+    settlementInstrument : InstrumentId
+    quantity : Decimal
+    unitPrice : Decimal
+    securityLeg : AllocationLegRef
+    paymentLeg : AllocationLegRef
+    sealedQuote : ContractId SealedQuote
+    expiry : Time
+  where
+    signatory buyer, dealer
+    observer executor
+
+    -- Records the settlement.
+    --
+    -- The agent submits this choice in the same Ledger API update as the two
+    -- Allocation_ExecuteTransfer exercises. Daml cannot observe a registry
+    -- transfer, so the guarantee is transactional: if either leg fails, this
+    -- choice is rolled back with it and no receipt is ever created.
+    --
+    -- Consuming, so one plan yields exactly one receipt. The choice returns ()
+    -- because that is what makes Daml archive the plan once the choice body
+    -- returns. An explicit `archive self` here would archive the contract twice
+    -- and the ledger rejects the exercise with "a contract that was consumed in
+    -- same transaction". The receipt is therefore found by its settlement
+    -- reference rather than returned as a ContractId.
+    choice Record : ()
+      controller buyer, dealer
+      do
+        now <- getTime
+        assertMsg "Settlement plan has expired" (this.expiry > now)
+        assertMsg "Settlement plan must move a positive quantity" (this.quantity > 0.0)
+        assertMsg "Settlement plan must clear at a positive price" (this.unitPrice > 0.0)
+
+        award <- fetch this.sealedQuote
+        assertMsg "Settlement buyer must match the awarded quote" (award.buyer == this.buyer)
+        assertMsg "Settlement dealer must match the awarded quote" (award.dealer == this.dealer)
+        assertMsg "Awarded quote exceeds the buyer max price" (award.offeredPrice <= award.maxPrice)
+        assertMsg "Settlement price must match the awarded quote" (award.offeredPrice == this.unitPrice)
+        assertMsg "Settlement quantity must match the awarded quote" (award.amount == this.quantity)
+        assertMsg "Settlement security instrument must match the awarded quote"
+          (award.securityInstrument == this.securityInstrument)
+        assertMsg "Settlement settlement instrument must match the awarded quote"
+          (award.settlementInstrument == this.settlementInstrument)
+
+        case award.mandate of
+          None -> pure ()
+          Some mandateCid -> do
+            mandate <- fetch mandateCid
+            assertMsg "Settlement amount exceeds the approved treasury mandate"
+              (this.quantity <= mandate.maxAmount)
+            assertMsg "Settlement price exceeds the approved treasury mandate"
+              (this.unitPrice <= mandate.maxPrice)
+            assertMsg "Settlement security instrument exceeds the approved treasury mandate"
+              (this.securityInstrument == mandate.securityInstrument)
+            assertMsg "Settlement settlement instrument exceeds the approved treasury mandate"
+              (this.settlementInstrument == mandate.settlementInstrument)
+
+        -- The security leg delivers the traded instrument to the buyer and the
+        -- payment leg delivers the settlement instrument to the dealer.
+        assertMsg "Security leg must be recorded as the security side"
+          (this.securityLeg.role == SecurityLeg)
+        assertMsg "Payment leg must be recorded as the payment side"
+          (this.paymentLeg.role == PaymentLeg)
+        assertMsg "Security leg must come from the dealer" (this.securityLeg.sender == this.dealer)
+        assertMsg "Security leg must be delivered to the buyer" (this.securityLeg.receiver == this.buyer)
+        assertMsg "Payment leg must come from the buyer" (this.paymentLeg.sender == this.buyer)
+        assertMsg "Payment leg must be delivered to the dealer" (this.paymentLeg.receiver == this.dealer)
+        assertMsg "Security leg must carry the traded instrument"
+          (this.securityLeg.instrument == this.securityInstrument)
+        assertMsg "Payment leg must carry the settlement instrument"
+          (this.paymentLeg.instrument == this.settlementInstrument)
+        assertMsg "Security leg must move the settled quantity"
+          (this.securityLeg.amount == this.quantity)
+        assertMsg "Payment leg must cover the settled value"
+          (this.paymentLeg.amount == this.quantity * this.unitPrice)
+        assertMsg "Security leg must reference an allocation contract" (this.securityLeg.allocationCid /= "")
+        assertMsg "Payment leg must reference an allocation contract" (this.paymentLeg.allocationCid /= "")
+        assertMsg "Settlement legs must not reference the same allocation"
+          (this.securityLeg.allocationCid /= this.paymentLeg.allocationCid)
+
+        create SettlementReceipt with
+          reference = this.reference
+          buyer = this.buyer
+          dealer = this.dealer
+          executor = this.executor
+          securityInstrument = this.securityInstrument
+          settlementInstrument = this.settlementInstrument
+          quantity = this.quantity
+          unitPrice = this.unitPrice
+          totalValue = this.quantity * this.unitPrice
+          securityAllocationCid = this.securityLeg.allocationCid
+          paymentAllocationCid = this.paymentLeg.allocationCid
+          rfq = award.rfq
+          sealedQuote = this.sealedQuote
+          bidId = award.bidId
+          selectionPolicy = award.selectionPolicy
+          mandate = award.mandate
+          settledAt = now
+        pure ()
+
+-- A template may have only one consuming choice, and that choice is Record: it
+-- is what makes a plan yield exactly one receipt. A plan that is never recorded
+-- is abandoned when its expiry passes rather than being cancelled explicitly.
+
+template SettlementReceipt
+  with
+    reference : Text
+    buyer : Party
+    dealer : Party
+    executor : Party
+    securityInstrument : InstrumentId
+    settlementInstrument : InstrumentId
+    quantity : Decimal
+    unitPrice : Decimal
+    totalValue : Decimal
+    securityAllocationCid : Text
+    paymentAllocationCid : Text
+    rfq : ContractId BlockTradeRFQ
+    sealedQuote : ContractId SealedQuote
+    bidId : Text
+    selectionPolicy : SelectionPolicy
+    mandate : Optional (ContractId ApprovedMandate)
+    settledAt : Time
+  where
+    signatory buyer
+    observer dealer, executor

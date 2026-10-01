@@ -1,0 +1,213 @@
+module ShadowDesk.V2.Test where
+
+import Daml.Script
+import DA.Time (addRelTime, hours)
+import ShadowDesk.V2.Rfq
+import ShadowDesk.V2.Settlement
+
+leg : LegRole -> Text -> InstrumentId -> Party -> Party -> Decimal -> AllocationLegRef
+leg role cid inst snd rcv amt = AllocationLegRef with
+  role = role
+  allocationCid = cid
+  instrument = inst
+  sender = snd
+  receiver = rcv
+  amount = amt
+
+approve : Party -> Party -> [Party] -> InstrumentId -> InstrumentId -> Decimal -> Decimal -> Time -> Script (ContractId ApprovedMandate)
+approve buyer riskOfficer dealers securityInst settlementInst maxAmount maxPrice expiry = do
+  mandateCid <- submit (actAs [buyer, riskOfficer]) $ createCmd $ TreasuryMandate with
+    buyer = buyer
+    riskOfficer = riskOfficer
+    approvedDealers = dealers
+    securityInstrument = securityInst
+    settlementInstrument = settlementInst
+    maxAmount = maxAmount
+    maxPrice = maxPrice
+    reference = "MANDATE-V2"
+    expiry = expiry
+  submit (actAs [buyer, riskOfficer]) $ exerciseCmd mandateCid Approve
+
+-- Drives mandate to award and returns the sealed award.
+award : Party -> Party -> Party -> InstrumentId -> InstrumentId -> Time -> Decimal -> Script (ContractId SealedQuote)
+award buyer dealer riskOfficer securityInst settlementInst expiry price = do
+  mandateCid <- approve buyer riskOfficer [dealer] securityInst settlementInst 1_000_000.0 101.0 expiry
+  rfqCid <- submit buyer $ exerciseCmd mandateCid OpenRfq with
+    dealers = [dealer]
+    amount = 1_000_000.0
+    maxPrice = 101.0
+    reference = "RFQ-V2"
+    expiry = expiry
+  proposalCid <- submit dealer $ exerciseCmd rfqCid SubmitQuoteProposal with
+    dealer = dealer
+    offeredPrice = price
+    bidId = "BID-V2"
+  submit buyer $ exerciseCmd proposalCid AcceptProposal with
+    maxPrice = 101.0
+
+plan : Party -> Party -> Party -> InstrumentId -> InstrumentId -> Decimal -> Decimal -> AllocationLegRef -> AllocationLegRef -> ContractId SealedQuote -> Time -> Script (ContractId SettlementPlan)
+plan buyer dealer executor securityInst settlementInst quantity price securityLeg paymentLeg sealed expiry = do
+  cid <- submit (actAs [buyer, dealer]) $ createCmd $ SettlementPlan with
+    reference = "SETTLE-V2"
+    buyer = buyer
+    dealer = dealer
+    executor = executor
+    securityInstrument = securityInst
+    settlementInstrument = settlementInst
+    quantity = quantity
+    unitPrice = price
+    securityLeg = securityLeg
+    paymentLeg = paymentLeg
+    sealedQuote = sealed
+    expiry = expiry
+  -- Read the plan back before recording it, so a later failure is attributable
+  -- to a policy assertion rather than to reaching an unusable contract.
+  active <- queryContractId buyer cid
+  assertMsg "Created plan is active before it is recorded" (active /= (None : Optional SettlementPlan))
+  pure cid
+
+-- Records must be refused by an assertion, and the refusal must leave the plan
+-- intact. If the plan were consumed instead, the plan would be gone.
+recordMustFail : Party -> Party -> ContractId SettlementPlan -> Script ()
+recordMustFail buyer dealer planCid = do
+  submitMustFail (actAs [buyer, dealer]) $ exerciseCmd planCid Record
+  stillActive <- queryContractId buyer planCid
+  assertMsg "A refused record must leave the plan active" (stillActive /= (None : Optional SettlementPlan))
+
+test : Script ()
+test = do
+  buyer <- allocateParty "buyer"
+  dealer <- allocateParty "dealer"
+  riskOfficer <- allocateParty "riskOfficer"
+  -- Stand in for the registry admins. Only the fact that the two differ
+  -- matters: binding an id without its admin would let these swap.
+  cbtcAdmin <- allocateParty "cbtc-network"
+  bethAdmin <- allocateParty "beth-network"
+
+  let cbtc = InstrumentId with
+        id = "CBTC"
+        admin = cbtcAdmin
+  let beth = InstrumentId with
+        id = "BETH"
+        admin = bethAdmin
+  -- Same registry id, different admin.
+  let impostorCbtc = InstrumentId with
+        id = "CBTC"
+        admin = bethAdmin
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+  let quantity = 1_000_000.0
+  let price = 100.50
+
+  -- A mandate may not approve settling an instrument into itself.
+  mandateCid <- submit (actAs [buyer, riskOfficer]) $ createCmd $ TreasuryMandate with
+    buyer = buyer
+    riskOfficer = riskOfficer
+    approvedDealers = [dealer]
+    securityInstrument = cbtc
+    settlementInstrument = cbtc
+    maxAmount = 1_000_000.0
+    maxPrice = 101.0
+    reference = "MANDATE-V2-SELF"
+    expiry = expiry
+  submitMustFail (actAs [buyer, riskOfficer]) $ exerciseCmd mandateCid Approve
+  -- A refused approval must leave the mandate active.
+  mandateStillActive <- queryContractId buyer mandateCid
+  assertMsg "A refused approval must leave the mandate active"
+    (mandateStillActive /= (None : Optional TreasuryMandate))
+
+  sealedCid <- award buyer dealer riskOfficer cbtc beth expiry price
+
+  planCid <- plan
+    buyer dealer buyer cbtc beth quantity price
+    (leg SecurityLeg "ALLOC-SECURITY" cbtc dealer buyer quantity)
+    (leg PaymentLeg "ALLOC-PAYMENT" beth buyer dealer (quantity * price))
+    sealedCid expiry
+
+  submit (actAs [buyer, dealer]) $ exerciseCmd planCid Record
+
+  -- The receipt names the registry allocations, not a synthetic asset.
+  receipts <- query @SettlementReceipt buyer
+  assertMsg "Exactly one receipt exists after recording" (length receipts == 1)
+  case receipts of
+    [(_, receipt)] -> do
+      assertMsg "Receipt records the security allocation" (receipt.securityAllocationCid == "ALLOC-SECURITY")
+      assertMsg "Receipt records the payment allocation" (receipt.paymentAllocationCid == "ALLOC-PAYMENT")
+      assertMsg "Receipt binds the security instrument" (receipt.securityInstrument == cbtc)
+      assertMsg "Receipt binds the settlement instrument" (receipt.settlementInstrument == beth)
+      assertMsg "Receipt total is quantity times price" (receipt.totalValue == quantity * price)
+      assertMsg "Receipt records the executor" (receipt.executor == buyer)
+    _ -> error "Exactly one receipt must exist after recording"
+
+  -- Recording consumed the plan, so one plan yields exactly one receipt. The
+  -- plan is already gone here, so this is a plain failure, not recordMustFail.
+  gone <- queryContractId buyer planCid
+  assertMsg "Recorded plan no longer exists" (gone == (None : Optional SettlementPlan))
+  submitMustFail (actAs [buyer, dealer]) $ exerciseCmd planCid Record
+
+  -- A plan may not swap in a same-id, different-admin instrument.
+  impostorSealed <- award buyer dealer riskOfficer impostorCbtc beth expiry price
+  impostorPlan <- plan
+    buyer dealer buyer cbtc beth quantity price
+    (leg SecurityLeg "ALLOC-IMPOSTOR-SEC" cbtc dealer buyer quantity)
+    (leg PaymentLeg "ALLOC-IMPOSTOR-PAY" beth buyer dealer (quantity * price))
+    impostorSealed expiry
+  recordMustFail buyer dealer impostorPlan
+
+  -- A leg pointing the wrong way must not record.
+  directionSealed <- award buyer dealer riskOfficer cbtc beth expiry price
+  directionPlan <- plan
+    buyer dealer buyer cbtc beth quantity price
+    (leg SecurityLeg "ALLOC-DIR-SEC" cbtc buyer dealer quantity)
+    (leg PaymentLeg "ALLOC-DIR-PAY" beth buyer dealer (quantity * price))
+    directionSealed expiry
+  recordMustFail buyer dealer directionPlan
+
+  -- An under-funded payment leg must not record.
+  shortSealed <- award buyer dealer riskOfficer cbtc beth expiry price
+  shortPlan <- plan
+    buyer dealer buyer cbtc beth quantity price
+    (leg SecurityLeg "ALLOC-SHORT-SEC" cbtc dealer buyer quantity)
+    (leg PaymentLeg "ALLOC-SHORT-PAY" beth buyer dealer (quantity * price - 1.0))
+    shortSealed expiry
+  recordMustFail buyer dealer shortPlan
+
+  -- Both legs pointing at one allocation is not a two-leg settlement.
+  sameLegSealed <- award buyer dealer riskOfficer cbtc beth expiry price
+  sameLegPlan <- plan
+    buyer dealer buyer cbtc beth quantity price
+    (leg SecurityLeg "ALLOC-SAME" cbtc dealer buyer quantity)
+    (leg PaymentLeg "ALLOC-SAME" beth buyer dealer (quantity * price))
+    sameLegSealed expiry
+  recordMustFail buyer dealer sameLegPlan
+
+  -- A leg whose instrument does not match the traded instrument must not record.
+  mismatchSealed <- award buyer dealer riskOfficer cbtc beth expiry price
+  mismatchPlan <- plan
+    buyer dealer buyer cbtc beth quantity price
+    (leg SecurityLeg "ALLOC-MISMATCH-SEC" beth dealer buyer quantity)
+    (leg PaymentLeg "ALLOC-MISMATCH-PAY" beth buyer dealer (quantity * price))
+    mismatchSealed expiry
+  recordMustFail buyer dealer mismatchPlan
+
+  -- A price above the approved mandate must not record.
+  overPricedSealed <- award buyer dealer riskOfficer cbtc beth expiry price
+  overPricedPlan <- plan
+    buyer dealer buyer cbtc beth quantity 1_000.0
+    (leg SecurityLeg "ALLOC-PRICE-SEC" cbtc dealer buyer quantity)
+    (leg PaymentLeg "ALLOC-PRICE-PAY" beth buyer dealer (quantity * 1_000.0))
+    overPricedSealed expiry
+  recordMustFail buyer dealer overPricedPlan
+
+  -- A price that disagrees with the awarded quote must not record.
+  rePricedSealed <- award buyer dealer riskOfficer cbtc beth expiry price
+  rePricedPlan <- plan
+    buyer dealer buyer cbtc beth quantity 99.0
+    (leg SecurityLeg "ALLOC-REPRICE-SEC" cbtc dealer buyer quantity)
+    (leg PaymentLeg "ALLOC-REPRICE-PAY" beth buyer dealer (quantity * 99.0))
+    rePricedSealed expiry
+  recordMustFail buyer dealer rePricedPlan
+
+noop : Script ()
+noop = pure ()

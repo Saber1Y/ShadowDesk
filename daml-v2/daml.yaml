@@ -1,0 +1,8 @@
+sdk-version: 3.5.10
+name: shadowdesk-treasury-v2
+version: 1.0.0
+source: src
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script

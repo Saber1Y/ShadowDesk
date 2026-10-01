@@ -1,0 +1,223 @@
+module ShadowDesk.V2.Rfq where
+
+-- A Token Standard instrument is identified by its admin party together with
+-- its registry id. Binding only the id would let two different issuers claim the
+-- same symbol, so mandates name both.
+data InstrumentId = InstrumentId
+  with
+    id : Text
+    admin : Party
+  deriving (Eq, Show)
+
+data SelectionPolicy =
+  LowestPriceThenBidId
+  deriving (Eq, Show)
+
+template TreasuryMandate
+  with
+    buyer : Party
+    riskOfficer : Party
+    approvedDealers : [Party]
+    securityInstrument : InstrumentId
+    settlementInstrument : InstrumentId
+    maxAmount : Decimal
+    maxPrice : Decimal
+    reference : Text
+    expiry : Time
+  where
+    signatory buyer, riskOfficer
+
+    choice Approve : ContractId ApprovedMandate
+      controller buyer, riskOfficer
+      do
+        now <- getTime
+        assertMsg "Treasury mandate has expired" (now < this.expiry)
+        assertMsg "Treasury mandate must approve at least one dealer" (this.approvedDealers /= [])
+        assertMsg "Treasury mandate amount must be positive" (this.maxAmount > 0.0)
+        assertMsg "Treasury mandate price must be positive" (this.maxPrice > 0.0)
+        assertMsg "Treasury mandate security instrument id must be non-empty" (this.securityInstrument.id /= "")
+        assertMsg "Treasury mandate settlement instrument id must be non-empty" (this.settlementInstrument.id /= "")
+        assertMsg "Treasury mandate must not settle an instrument into itself"
+          (this.securityInstrument /= this.settlementInstrument)
+        create ApprovedMandate with
+          buyer = this.buyer
+          riskOfficer = this.riskOfficer
+          approvedDealers = this.approvedDealers
+          securityInstrument = this.securityInstrument
+          settlementInstrument = this.settlementInstrument
+          maxAmount = this.maxAmount
+          maxPrice = this.maxPrice
+          reference = this.reference
+          expiry = this.expiry
+          approvedAt = now
+
+template ApprovedMandate
+  with
+    buyer : Party
+    riskOfficer : Party
+    approvedDealers : [Party]
+    securityInstrument : InstrumentId
+    settlementInstrument : InstrumentId
+    maxAmount : Decimal
+    maxPrice : Decimal
+    reference : Text
+    expiry : Time
+    approvedAt : Time
+  where
+    signatory buyer, riskOfficer
+
+    nonconsuming choice OpenRfq : ContractId BlockTradeRFQ
+      with
+        dealers : [Party]
+        amount : Decimal
+        maxPrice : Decimal
+        reference : Text
+        expiry : Time
+      controller buyer
+      do
+        now <- getTime
+        assertMsg "Treasury mandate has expired" (now < this.expiry)
+        assertMsg "RFQ amount exceeds the approved treasury mandate" (amount <= this.maxAmount)
+        assertMsg "RFQ max price exceeds the approved treasury mandate" (maxPrice <= this.maxPrice)
+        assertMsg "RFQ expiry exceeds the approved treasury mandate" (expiry <= this.expiry)
+        assertMsg "RFQ must invite only approved dealers" (all (\dealer -> dealer `elem` this.approvedDealers) dealers)
+        assertMsg "RFQ must invite at least one dealer" (dealers /= [])
+        create BlockTradeRFQ with
+          buyer = this.buyer
+          dealers = dealers
+          securityInstrument = this.securityInstrument
+          settlementInstrument = this.settlementInstrument
+          amount = amount
+          maxPrice = maxPrice
+          selectionPolicy = LowestPriceThenBidId
+          reference = reference
+          expiry = expiry
+          mandate = Some self
+
+template BlockTradeRFQ
+  with
+    buyer : Party
+    dealers : [Party]
+    securityInstrument : InstrumentId
+    settlementInstrument : InstrumentId
+    amount : Decimal
+    maxPrice : Decimal
+    selectionPolicy : SelectionPolicy
+    reference : Text
+    expiry : Time
+    mandate : Optional (ContractId ApprovedMandate)
+  where
+    signatory buyer
+    observer dealers
+
+    nonconsuming choice SubmitQuoteProposal : ContractId QuoteProposal
+      with
+        dealer : Party
+        offeredPrice : Decimal
+        bidId : Text
+      controller dealer
+      do
+        currentTime <- getTime
+        assertMsg "RFQ has expired" (currentTime < this.expiry)
+        assertMsg "Dealer is not invited to this RFQ" (dealer `elem` this.dealers)
+        assertMsg "Quote price must be positive" (offeredPrice > 0.0)
+        assertMsg "Bid Id must be non-empty" (bidId /= "")
+        create QuoteProposal with
+          rfq = self
+          buyer = this.buyer
+          dealer = dealer
+          securityInstrument = this.securityInstrument
+          settlementInstrument = this.settlementInstrument
+          amount = this.amount
+          offeredPrice = offeredPrice
+          bidId = bidId
+          expiry = this.expiry
+
+    nonconsuming choice CloseRfq : ()
+      controller buyer
+      do
+        archive self
+
+template QuoteProposal
+  with
+    rfq : ContractId BlockTradeRFQ
+    buyer : Party
+    dealer : Party
+    securityInstrument : InstrumentId
+    settlementInstrument : InstrumentId
+    amount : Decimal
+    offeredPrice : Decimal
+    bidId : Text
+    expiry : Time
+  where
+    signatory dealer
+    observer buyer
+
+    nonconsuming choice AcceptProposal : ContractId SealedQuote
+      with
+        maxPrice : Decimal
+      controller buyer
+      do
+        currentTime <- getTime
+        rfqRef <- fetch this.rfq
+        assertMsg "RFQ has expired" (currentTime < rfqRef.expiry)
+        assertMsg "Quote proposal has expired" (currentTime < this.expiry)
+        assertMsg "RFQ buyer mismatch" (rfqRef.buyer == buyer)
+        assertMsg "Award max price must match the RFQ" (maxPrice == rfqRef.maxPrice)
+        assertMsg "Offered price exceeds buyer max price" (this.offeredPrice <= rfqRef.maxPrice)
+        assertMsg "Quoted security instrument must match the RFQ" (this.securityInstrument == rfqRef.securityInstrument)
+        assertMsg "Quoted settlement instrument must match the RFQ" (this.settlementInstrument == rfqRef.settlementInstrument)
+        case rfqRef.mandate of
+          None -> pure ()
+          Some mandateCid -> do
+            mandate <- fetch mandateCid
+            assertMsg "Award buyer does not match the approved mandate" (rfqRef.buyer == mandate.buyer)
+            assertMsg "Award security instrument exceeds the approved mandate"
+              (rfqRef.securityInstrument == mandate.securityInstrument)
+            assertMsg "Award settlement instrument exceeds the approved mandate"
+              (rfqRef.settlementInstrument == mandate.settlementInstrument)
+            assertMsg "Award amount exceeds the approved treasury mandate" (rfqRef.amount <= mandate.maxAmount)
+            assertMsg "Award price exceeds the approved treasury mandate" (this.offeredPrice <= mandate.maxPrice)
+            assertMsg "Award expiry exceeds the approved treasury mandate" (rfqRef.expiry <= mandate.expiry)
+        -- Consume the request so it can be awarded exactly once. A second
+        -- acceptance, or a concurrent one, can no longer fetch the RFQ.
+        archive this.rfq
+        create SealedQuote with
+          rfq = this.rfq
+          rfqReference = rfqRef.reference
+          maxPrice = rfqRef.maxPrice
+          invitedDealers = rfqRef.dealers
+          buyer = this.buyer
+          dealer = this.dealer
+          securityInstrument = this.securityInstrument
+          settlementInstrument = this.settlementInstrument
+          amount = this.amount
+          offeredPrice = this.offeredPrice
+          bidId = this.bidId
+          selectionPolicy = rfqRef.selectionPolicy
+          expiry = this.expiry
+          mandate = rfqRef.mandate
+
+    nonconsuming choice WithdrawProposal : ()
+      controller dealer
+      do
+        archive self
+
+template SealedQuote
+  with
+    rfq : ContractId BlockTradeRFQ
+    rfqReference : Text
+    maxPrice : Decimal
+    invitedDealers : [Party]
+    buyer : Party
+    dealer : Party
+    securityInstrument : InstrumentId
+    settlementInstrument : InstrumentId
+    amount : Decimal
+    offeredPrice : Decimal
+    bidId : Text
+    selectionPolicy : SelectionPolicy
+    expiry : Time
+    mandate : Optional (ContractId ApprovedMandate)
+  where
+    signatory buyer, dealer
