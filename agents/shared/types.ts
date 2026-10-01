@@ -130,6 +130,14 @@ export interface CreatedEvent {
   witnessParties: Party[];
 }
 
+export interface InterfaceCreatedEvent {
+  offset: number;
+  contractId: string;
+  templateId: string;
+  interfaceId: string;
+  viewValue: any;
+}
+
 export interface ArchivedEvent {
   offset: number;
   nodeId: number;

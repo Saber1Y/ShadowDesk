@@ -1,4 +1,5 @@
-import { TPL, PACKAGE_ID, type TemplateKey, type Party, type CreatedEvent, type TransactionResponse } from "./types.js";
+import { randomUUID } from "node:crypto";
+import { TPL, PACKAGE_ID, type TemplateKey, type Party, type CreatedEvent, type InterfaceCreatedEvent, type TransactionResponse } from "./types.js";
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
@@ -65,6 +66,10 @@ export class CantonClient {
 
   private submit(body: unknown, commandId: string): Promise<any> {
     const cmd = body as any;
+    // Token Standard registry commands need `disclosedContracts` and do not
+    // belong to the ShadowDesk package, so the preference list must be
+    // overridable and omittable rather than always pinned to PACKAGE_ID.
+    const hasPreference = "packageIdSelectionPreference" in cmd;
     const wrapped = {
       commands: {
         commands: cmd.commands,
@@ -72,13 +77,106 @@ export class CantonClient {
         userId: this.userId,
         actAs: cmd.actAs,
         ...(cmd.readAs ? { readAs: cmd.readAs } : {}),
-        packageIdSelectionPreference: cmd.packageIdSelectionPreference ?? [PACKAGE_ID],
+        ...(cmd.disclosedContracts ? { disclosedContracts: cmd.disclosedContracts } : {}),
+        ...(hasPreference
+          ? (cmd.packageIdSelectionPreference ? { packageIdSelectionPreference: cmd.packageIdSelectionPreference } : {})
+          : { packageIdSelectionPreference: [PACKAGE_ID] }),
       },
     };
     return this.req("/v2/commands/submit-and-wait-for-transaction", {
       method: "POST",
       body: JSON.stringify(wrapped),
     });
+  }
+
+  /**
+   * Submit several commands as one transaction. Either every command is
+   * applied or none is, which is what makes a two-leg delivery-versus-payment
+   * settlement atomic.
+   */
+  async submitMany(
+    commands: unknown[],
+    actAs: string[],
+    options: { disclosedContracts?: unknown[]; packageIdSelectionPreference?: string[] | null } = {},
+    commandId = randomUUID(),
+  ): Promise<TransactionResponse> {
+    const j = await this.submit(
+      {
+        commands,
+        actAs,
+        disclosedContracts: options.disclosedContracts,
+        packageIdSelectionPreference: options.packageIdSelectionPreference,
+      },
+      commandId,
+    );
+    return j as TransactionResponse;
+  }
+
+  /**
+   * Exercise a choice on any contract by its template identifier. Needed for
+   * Token Standard contracts, which are addressed by registry interface ids
+   * rather than by a template in this package.
+   */
+  async exerciseRaw(
+    templateId: string,
+    contractId: string,
+    choice: string,
+    choiceArgument: Record<string, unknown>,
+    actAs: string[],
+    options: { disclosedContracts?: unknown[]; packageIdSelectionPreference?: string[] | null } = {},
+    commandId = randomUUID(),
+  ): Promise<TransactionResponse> {
+    return this.submitMany(
+      [{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }],
+      actAs,
+      options,
+      commandId,
+    );
+  }
+
+  /**
+   * Find contracts by the interface they implement and return their interface
+   * views. Token Standard holdings and allocations are only readable this way:
+   * they are registry contracts with no template in this package.
+   */
+  async queryByInterface(
+    party: string,
+    interfaceId: string,
+    activeAtOffset: number,
+    options: { includeCreatedEventBlob?: boolean } = {},
+  ): Promise<InterfaceCreatedEvent[]> {
+    const identifierFilter = {
+      InterfaceFilter: {
+        value: {
+          interfaceId,
+          includeInterfaceView: true,
+          ...(options.includeCreatedEventBlob ? { includeCreatedEventBlob: true } : {}),
+        },
+      },
+    };
+    const j = await this.req("/v2/state/active-contracts", {
+      method: "POST",
+      body: JSON.stringify({
+        activeAtOffset,
+        filter: { filtersByParty: { [party]: { cumulative: [identifierFilter] } } },
+        verbose: true,
+      }),
+    });
+    const out: InterfaceCreatedEvent[] = [];
+    for (const entry of Array.isArray(j) ? j : []) {
+      const created = entry?.contractEntry?.JsActiveContract?.createdEvent;
+      if (!created) continue;
+      for (const view of created.interfaceViews ?? []) {
+        out.push({
+          contractId: created.contractId,
+          templateId: created.templateId,
+          offset: created.offset,
+          interfaceId: view.interfaceId,
+          viewValue: view.viewValue,
+        });
+      }
+    }
+    return out;
   }
 
   async ledgerEnd(): Promise<number> {
