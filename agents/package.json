@@ -6,7 +6,9 @@
   "scripts": {
     "demo": "tsx demo/demo.ts",
     "typecheck": "tsc --noEmit",
-    "e2e:award-chain": "tsx e2e/award-chain-check.ts"
+    "e2e:award-chain": "tsx e2e/award-chain-check.ts",
+    "e2e:real-dvp": "tsx e2e/real-dvp.ts",
+    "e2e:atomic-submit": "tsx e2e/atomic-submit-check.ts"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
