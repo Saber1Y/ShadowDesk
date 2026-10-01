@@ -62,12 +62,63 @@ for i in $(seq 1 150); do
   sleep 2
 done
 
+# The HTTP ledgers answer before the synchronizer is connected, so a cold start
+# can pass the readiness probe and then fail the upload with
+# PACKAGE_SERVICE_CANNOT_AUTODETECT_SYNCHRONIZER. Retry the upload, which is the
+# step that actually needs the synchronizer, instead of only probing HTTP.
+vet_package() {
+  config="$1"
+  label="$2"
+  for attempt in $(seq 1 20); do
+    if (cd "$ROOT/daml" && dpm script --participant-config "$config" --dar "$DAR" \
+      --upload-dar=true --script-name ShadowDesk.Test:noop > "$LOG_DIR/upload-$label.log" 2>&1); then
+      return 0
+    fi
+    if grep -q "CANNOT_AUTODETECT_SYNCHRONIZER\|no synchronizers currently connected" \
+      "$LOG_DIR/upload-$label.log"; then
+      if [ "$attempt" = "1" ]; then
+        echo "    synchronizer not connected yet; retrying upload to $label"
+      fi
+      sleep 3
+      continue
+    fi
+    echo "!! upload to $label failed for a reason other than synchronizer startup:"
+    tail -20 "$LOG_DIR/upload-$label.log"
+    return 1
+  done
+  echo "!! synchronizer never connected for $label; tail of $LOG_DIR/upload-$label.log:"
+  tail -20 "$LOG_DIR/upload-$label.log"
+  return 1
+}
+
 echo "==> vetting $PKG_NAME-$PKG_VERSION on participant1"
-(cd "$ROOT/daml" && dpm script --participant-config participants.json --dar "$DAR" \
-  --upload-dar=true --script-name ShadowDesk.Test:noop > "$LOG_DIR/upload-p1.log" 2>&1)
+vet_package participants.json p1 || exit 1
 echo "==> vetting $PKG_NAME-$PKG_VERSION on participant2"
-(cd "$ROOT/daml" && dpm script --participant-config participants-p2.json --dar "$DAR" \
-  --upload-dar=true --script-name ShadowDesk.Test:noop > "$LOG_DIR/upload-p2.log" 2>&1)
+vet_package participants-p2.json p2 || exit 1
+
+# The v2 settlement package is a separate DAR. Upload it when it has been built
+# so the ledger serves both packages; a missing v2 build is not fatal here
+# because v1-only scripts do not need it.
+V2_PKG_NAME="$(awk '/^name:/{print $2; exit}' "$ROOT/daml-v2/daml.yaml" 2>/dev/null || true)"
+V2_PKG_VERSION="$(awk '/^version:/{print $2; exit}' "$ROOT/daml-v2/daml.yaml" 2>/dev/null || true)"
+V2_DAR="$ROOT/daml-v2/.daml/dist/${V2_PKG_NAME}-${V2_PKG_VERSION}.dar"
+if [ -f "$V2_DAR" ]; then
+  for label in p1 p2; do
+    port=6864
+    [ "$label" = "p2" ] && port=18003
+    echo "==> uploading $V2_PKG_NAME-$V2_PKG_VERSION to $label"
+    code="$(curl -s -m 60 -o "$LOG_DIR/upload-$label-v2.log" -w '%{http_code}' \
+      -X POST -H "Content-Type: application/octet-stream" \
+      --data-binary "@$V2_DAR" "http://127.0.0.1:$port/v2/packages" || true)"
+    if [ "$code" != "200" ]; then
+      echo "!! v2 upload to $label returned HTTP $code; see $LOG_DIR/upload-$label-v2.log"
+      cat "$LOG_DIR/upload-$label-v2.log"
+      exit 1
+    fi
+  done
+else
+  echo "    skipping v2 package; build it with: (cd \"$ROOT/daml-v2\" && dpm build)"
+fi
 
 echo "==> sandbox parties on participant1"
 curl -s http://127.0.0.1:6864/v2/parties \
