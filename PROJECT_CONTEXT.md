@@ -590,7 +590,7 @@ Verified lessons (frontend):
 - The replay route returns newline-delimited JSON (not SSE); the client splits chunks on `\n` and JSON-parses each line. Envelopes: `{"line": ...}`, `{"snapshot": ...}`, `{"done": bool}`, `{"snapshotError": ...}`.
 - Created events in the JSON API ACS v2 response carry `createdAt` (string timestamp), `createArgument`, `signatories`, `observers`, `offset` - enough to build a timestamped public timeline without any transaction-stream subscription.
 - Deal contracts are archived when `Settle` runs, so an ACS-derived "active deals" count is always 0 after settlement; the dashboard's "Trades settled" metric therefore counts SettlementReceipts, and the settlement panel reads the receipt + deal reference from active contracts.
-- A `next build` run while the dev server is up can leave the dev `.next` dir inconsistent (500s); restart `next dev` after builds.
+- Build and dev now use separate output directories (`.next` and `.next-dev`) so `npm run build` can run safely while `next dev` is running. `next start` continues to use the default `.next`. The dev server's type roots include `.next-dev/types/**/*.ts`.
 
 Decisions made:
 - Framework: Next.js + Tailwind v4 + Motion + lucide-react, App Router, Geist fonts - the repo's standard web stack, per prior projects.
@@ -835,7 +835,7 @@ Files added or changed:
 
 Commands run and results:
 - `npm run typecheck` in `frontend` passes.
-- `npm run build` in `frontend` compiles cleanly on a removed `.next`. Building while `next dev` is running fails with `PageNotFoundError` for `/_not-found/page` and `/api/replay/route`; that is `.next` contention between the two commands, not a code fault. Stop the dev server before building.
+- `npm run build` in `frontend` compiles cleanly and no longer needs the dev server stopped first. Building while `next dev` is running previously failed with `PageNotFoundError` for `/_not-found/page` and `/api/replay/route` and could leave the dev server returning 500s; that contention is fixed by giving dev and build separate output directories, verified by building while dev runs and re-checking `/`, `/api/state`, and `/api/auth/session` afterwards.
 - `bash scripts/env/use-profile.sh localnet` restarts the dashboard on port 3001 against the local two-participant sandbox.
 - `bash scripts/localnet/smoke-test.sh` passes: participants reachable, custom cTBILL/cUSDC round settled with the privacy check, readable request validation.
 - `/api/state` reports the mandate projection correctly: a consumed `TreasuryMandate` and its `ApprovedMandate` appear as `ACTIVE`, requests and receipts carry the mandate reference, and a non-mandated RFQ correctly reports `mandated: false`.
