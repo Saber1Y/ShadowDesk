@@ -871,6 +871,49 @@ These decisions must be resolved before production implementation.
 - Is an external LLM required by the judging criteria or only optional?
 - What evidence format is required for the final submission?
 
+### Session 2026-10-01 (second): Real Allocation DvP Promoted Into Shared Tooling
+
+The real Token Standard DvP only existed as throwaway scripts under `/tmp` with machine-specific session paths and duplicated OIDC refresh logic.
+It is now repository tooling, but `Deal.Settle` still settles synthetic `ShadowDesk.Asset` contracts, so ShadowDesk is still not a real token settlement desk.
+
+Files added:
+
+- `agents/shared/token-allocation.ts` holds real balances, resolves the holding that funds a leg, creates legs against the registry-minted factory choice context, reads legs back through the allocation interface, and executes all legs in one transaction.
+- `agents/e2e/real-dvp.ts` runs the two-leg settlement on DevNet and refuses to run on localnet because no registry exists there.
+- `agents/e2e/atomic-submit-check.ts` gates the adapter on the local sandbox with no credentials.
+- `agents/shared/config.ts` declares the BETH instrument alongside CBTC so admin parties are never hardcoded in the adapter.
+
+Files changed:
+
+- `agents/shared/client.ts` passes `disclosedContracts` through, lets callers override or omit `packageIdSelectionPreference`, and adds `submitMany`, `exerciseRaw` and `queryByInterface`.
+- `agents/shared/types.ts` adds `InterfaceCreatedEvent`.
+- `agents/package.json` adds `e2e:real-dvp` and `e2e:atomic-submit`.
+
+Commands run and results:
+
+- `npm run typecheck` in `agents` passes.
+- `npm run e2e:atomic-submit` on localnet passes: one transaction created two contracts at a single offset, proving `submitMany` atomicity, and the participant accepted the interface-filtered query.
+- Both registry endpoints were probed live with deliberately invalid contract ids and rejected only on `contract-by-id`, which confirms the URL paths and request envelopes are shaped correctly.
+
+Known failures and unverified work:
+
+- The DevNet profile has empty `SHADOWDESK_CANTON_ACCESS_TOKEN` and `SHADOWDESK_CANTON_REFRESH_TOKEN`, so `e2e:real-dvp` cannot run until someone completes the Keycloak login.
+- `AllocationFactory_Allocate` creating a `DvpLegAllocation`, and `Allocation_ExecuteTransfer` executing both legs atomically, are NOT re-verified by the promoted code.
+- The earlier DevNet proof consumed the funded holdings, so a rerun needs the buyer re-funded with BETH through a transfer-in flow that this adapter does not cover.
+- The atomic-submit check compares one offset, not full all-or-nothing rollback under a faulting second command.
+
+Decisions made:
+
+- The registry HTTP call lives in the allocation adapter rather than on `CantonClient`, keeping that class scoped to the Ledger API.
+- Allocation legs are addressed by the contract's resolved template id, not by the interface id, because `ExerciseCommand` needs the template.
+- Interface versions are parameters with fallback defaults instead of hardcoded constants, to support capability negotiation in the treasury v2 package.
+
+Next three actions:
+
+- Re-authenticate the DevNet profile and run `npm run e2e:real-dvp` after re-funding, so the promoted code carries the same evidence as the original proof.
+- Design `shadowdesk-treasury-v2` so the mandate binds full registry instrument ids and allocation admin parties instead of display symbols.
+- Settle both allocation legs and the ShadowDesk receipt in one Ledger API update.
+
 ## Non-Negotiable Demo Claims
 
 The demo may claim that Canton enforces selective visibility only if participant-level tests and live ledger queries support that claim.
