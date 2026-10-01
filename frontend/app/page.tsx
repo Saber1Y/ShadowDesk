@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUpRight, Play, RefreshCw, Terminal } from "lucide-react";
-import type { AuthStatus, DashboardState, StreamLine } from "@/lib/types";
+import { ArrowUpRight, Play, RefreshCw, ShieldCheck, Terminal, TriangleAlert } from "lucide-react";
+import type { AuthStatus, DashboardState, MandateView, StreamLine } from "@/lib/types";
 import { PublicView } from "@/components/views/PublicView";
 import { InstitutionalView } from "@/components/views/InstitutionalView";
 import { ShadowDeskMark } from "@/components/shadowdesk-mark";
@@ -21,7 +21,7 @@ const DEFAULT_STATE: DashboardState = {
   ],
   parties: { buyer: null, dealerA: null, dealerB: null },
   public: { events: [], counts: { rfqs: 0, proposals: 0, sealed: 0, deals: 0, receipts: 0, assets: 0 } },
-  institutional: { buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [] },
+  institutional: { buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [], mandates: [] },
   privacy: { checked: false, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null },
 };
 
@@ -188,6 +188,40 @@ export default function Page() {
   const allReachable = state.participants.every((p) => p.reachable);
   const needsAuth = auth?.mode === "devnet" && !auth.authenticated;
   const participantCount = new Set(state.participants.map((participant) => participant.jsonApi)).size;
+
+  // The envelope is the product: compare the entered trade against the mandate
+  // the ledger actually enforces. This only warns. Rejection stays on-ledger so
+  // the runtime assertion is what stops an out-of-policy trade.
+  const mandates = state.institutional.mandates;
+  const activeMandate = useMemo(() => {
+    return (mandates ?? []).filter((m) => m.status === "ACTIVE").at(-1) ?? null;
+  }, [mandates]);
+
+  const envelope = useMemo(() => {
+    if (!activeMandate) return null;
+    const amountNumber = Number(amount);
+    const priceNumber = Number(maxPrice);
+    const breaches: string[] = [];
+    if (Number.isFinite(amountNumber) && amountNumber > Number(activeMandate.maxAmount)) breaches.push("amount");
+    if (Number.isFinite(priceNumber) && priceNumber > Number(activeMandate.maxPrice)) breaches.push("price ceiling");
+    if (assetToBuy !== activeMandate.assetToBuy) breaches.push("instrument");
+    if (settlementAsset !== activeMandate.settlementAsset) breaches.push("settlement asset");
+    return { mandate: activeMandate, breaches, within: breaches.length === 0 };
+  }, [activeMandate, amount, maxPrice, assetToBuy, settlementAsset]);
+
+  // Seed the request from the approved envelope the first time one appears, so
+  // the operator starts inside policy instead of on top of an arbitrary default.
+  // Seeding happens once: later mandate changes never overwrite typed input.
+  const seededFromMandate = useRef(false);
+  useEffect(() => {
+    if (!activeMandate || seededFromMandate.current) return;
+    seededFromMandate.current = true;
+    setAssetToBuy(activeMandate.assetToBuy);
+    setSettlementAsset(activeMandate.settlementAsset);
+    setAmount(String(Number(activeMandate.maxAmount)));
+    setMaxPrice(Number(activeMandate.maxPrice).toFixed(2));
+  }, [activeMandate]);
+
   const retryFailure = () => {
     if (failure?.title === "The trade request was not completed" || failure?.title === "The trade did not settle" || failure?.title === "Check the trade details") {
       void runRound();
@@ -213,7 +247,7 @@ export default function Page() {
               <ShadowDeskMark className="size-6" />
             </span>
             <span className="hidden text-foreground sm:block">SHADOWDESK</span>
-            <span className="hidden font-mono text-[9px] tracking-[0.2em] text-muted-foreground lg:block">PRIVATE INSTITUTIONAL RFQ / DVP</span>
+            <span className="hidden font-mono text-[9px] tracking-[0.2em] text-muted-foreground lg:block">MANDATE-BOUND TREASURY EXECUTION</span>
           </div>
 
           <nav className="hidden items-center gap-1 text-sm text-muted-foreground md:flex">
@@ -257,7 +291,7 @@ export default function Page() {
                     {running ? "round in flight" : allReachable ? "fabric live" : "awaiting fabric"}
                   </p>
                   <h1 className="mt-2 text-3xl font-semibold leading-[1] tracking-[-0.045em] md:text-5xl">
-                    A fund places a block. <span className="text-primary">Two dealers price it blind.</span>
+                    The agent <span className="text-primary">cannot settle outside its mandate.</span>
                   </h1>
                 </div>
                 <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
@@ -282,6 +316,16 @@ export default function Page() {
                   <NumberField label="Amount" value={amount} onChange={setAmount} />
                   <NumberField label="Maximum price" value={maxPrice} onChange={setMaxPrice} step="0.01" />
                 </div>
+                <EnvelopeReadout
+                  envelope={envelope}
+                  onMatch={() => {
+                    if (!activeMandate) return;
+                    setAssetToBuy(activeMandate.assetToBuy);
+                    setSettlementAsset(activeMandate.settlementAsset);
+                    setAmount(String(Number(activeMandate.maxAmount)));
+                    setMaxPrice(Number(activeMandate.maxPrice).toFixed(2));
+                  }}
+                />
               </section>
 
               <div className="md:hidden mb-5 grid grid-cols-2 gap-2">
@@ -335,6 +379,43 @@ function TabButton({ active, onClick, children, mobile }: { active: boolean; onC
     >
       {children}
     </button>
+  );
+}
+
+function EnvelopeReadout({ envelope, onMatch }: { envelope: { mandate: MandateView; breaches: string[]; within: boolean } | null; onMatch?: () => void }) {
+  if (!envelope) {
+    return (
+      <p className="mt-4 border-t border-border pt-4 font-mono text-[10px] leading-relaxed text-zinc-600">
+        No approved mandate on the ledger. Running a round will create one, then open the RFQ under it.
+      </p>
+    );
+  }
+  const { mandate, breaches, within } = envelope;
+  return (
+    <div
+      className={`mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4 ${
+        within ? "border-border" : "border-destructive/30"
+      }`}
+    >
+      <p className={`flex items-center gap-2 font-mono text-[10px] ${within ? "text-primary" : "text-destructive"}`}>
+        {within ? <ShieldCheck className="size-3 shrink-0" /> : <TriangleAlert className="size-3 shrink-0" />}
+        <span className="uppercase tracking-[0.14em]">{within ? "inside envelope" : `outside envelope: ${breaches.join(", ")}`}</span>
+        <span className="text-muted-foreground">·</span>
+        <span className="text-foreground">{mandate.reference}</span>
+      </p>
+      <p className="font-mono text-[10px] text-muted-foreground">
+        ceiling {Number(mandate.maxPrice).toFixed(2)} · max {Number(mandate.maxAmount).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+        {!within && (
+          <button
+            type="button"
+            onClick={() => onMatch?.()}
+            className="ml-3 uppercase tracking-[0.14em] text-primary underline decoration-primary/40 underline-offset-4 transition-colors hover:decoration-primary"
+          >
+            match mandate
+          </button>
+        )}
+      </p>
+    </div>
   );
 }
 

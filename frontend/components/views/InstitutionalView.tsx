@@ -1,9 +1,9 @@
 "use client";
 
 import { motion } from "motion/react";
-import { BadgeCheck, Check, CircleDot, Landmark, ReceiptText, Send, WalletCards, X } from "lucide-react";
+import { BadgeCheck, Check, CircleDot, Landmark, ReceiptText, Send, ShieldCheck, WalletCards, X } from "lucide-react";
 import { HudPanel, Metric, StatusPill } from "../hud";
-import type { DashboardState } from "@/lib/types";
+import type { DashboardState, MandateView } from "@/lib/types";
 
 export function InstitutionalView({ state }: { state: DashboardState }) {
   const { institutional: inst, parties } = state;
@@ -14,9 +14,15 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
   const deal = inst.deals[inst.deals.length - 1] ?? null;
   const buyerBonds = inst.assets.filter((a) => a.symbol === "cTBILL").at(-1);
   const buyerCash = inst.assets.filter((a) => a.symbol === "cUSDC").at(-1);
+  // Prefer an approved envelope; fall back to one still awaiting its second
+  // signature so the panel reports the current authorisation state honestly.
+  const mandate = (inst.mandates ?? []).filter((m) => m.status === "ACTIVE").at(-1)
+    ?? (inst.mandates ?? []).at(-1)
+    ?? null;
 
   return (
     <div className="space-y-5">
+      <MandatePanel mandate={mandate} mandateCount={inst.mandates?.length ?? 0} />
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
         <HudPanel
           label="Buyer participant view"
@@ -48,11 +54,21 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
             <>
               <div className="flex items-center justify-between gap-2">
                 <p className="truncate font-mono text-[14px] font-semibold text-foreground">{latestRfq.reference}</p>
-                {latestRfq.awarded ? (
-                  <StatusPill tone="ok" label="AWARDED" />
-                ) : (
-                  <StatusPill tone="live" label="OPEN" pulse />
-                )}
+                <div className="flex items-center gap-2">
+                  {latestRfq.mandated && (
+                    <span
+                      className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-primary"
+                      title={latestRfq.mandateRef ? `Mandate ${latestRfq.mandateRef}` : "Executed under a treasury mandate"}
+                    >
+                      <ShieldCheck className="size-3" /> Mandated
+                    </span>
+                  )}
+                  {latestRfq.awarded ? (
+                    <StatusPill tone="ok" label="AWARDED" />
+                  ) : (
+                    <StatusPill tone="live" label="OPEN" pulse />
+                  )}
+                </div>
               </div>
               <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-5">
                 <Metric label="Size" value={`${fmtQty(latestRfq.amount)} ${latestRfq.assetToBuy}`} accent />
@@ -156,12 +172,109 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
                   <span className="text-foreground">{receipt.cid}</span>
                 </p>
               )}
+              {receipt.mandateRef && (
+                <p className="mt-2 flex items-center gap-2 font-mono text-[10px] text-primary">
+                  <ShieldCheck className="size-3 shrink-0" />
+                  settled under mandate{" "}
+                  <span className="text-foreground">{receipt.mandateRef}</span>
+                </p>
+              )}
             </>
           ) : (
             <NoData label="Nothing settled yet. Run a round to see atomic delivery-versus-payment." />
           )}
         </HudPanel>
       </div>
+    </div>
+  );
+}
+
+function MandatePanel({ mandate, mandateCount }: { mandate: MandateView | null; mandateCount: number }) {
+  if (!mandate) {
+    return (
+      <HudPanel label="Treasury mandate" icon={ShieldCheck}>
+        <div className="flex h-full min-h-[110px] flex-col items-center justify-center text-center">
+          <ShieldCheck className="mb-2 size-5 text-zinc-600" />
+          <p className="mx-auto max-w-[46ch] font-mono text-[11px] leading-relaxed text-muted-foreground">
+            No treasury mandate on the ledger yet. Run a round to execute under dual control.
+          </p>
+        </div>
+      </HudPanel>
+    );
+  }
+
+  const expired = new Date(mandate.expiry).getTime() <= Date.now();
+  const tone = expired ? "failed" : mandate.status === "ACTIVE" ? "live" : "muted";
+  const label = expired ? "EXPIRED" : mandate.status === "ACTIVE" ? "ACTIVE" : "AWAITING CO-SIGN";
+
+  return (
+    <HudPanel
+      label="Treasury mandate"
+      icon={ShieldCheck}
+      className="lg:col-span-12"
+      badge={<StatusPill tone={tone} label={label} pulse={!expired && mandate.status === "ACTIVE"} />}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <p className="font-mono text-[15px] font-semibold tracking-[-0.01em] text-foreground">{mandate.reference}</p>
+        <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">
+          {mandateCount} on ledger · cid {mandate.cid}
+        </p>
+      </div>
+
+      <p className="mt-3 max-w-[70ch] text-[13px] leading-relaxed text-muted-foreground">
+        The agent cannot settle outside this envelope. Amount, price, instrument pair, dealer list, and expiry are
+        asserted by the Canton runtime at RFQ open, award, and settlement.
+      </p>
+
+      <div className="mt-6 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-6">
+        <Metric label="Buy" value={mandate.assetToBuy} accent />
+        <Metric label="Settle in" value={mandate.settlementAsset} />
+        <Metric label="Max amount" value={fmtQty(mandate.maxAmount)} accent />
+        <Metric label="Price ceiling" value={fmtPrice(mandate.maxPrice)} />
+        <Metric label="Expires" value={tsStamp(mandate.expiry)} />
+        <Metric label={mandate.status === "ACTIVE" ? "Approved" : "Raised"} value={tsStamp(mandate.approvedAt ?? mandate.at)} />
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-xl border border-border bg-[#030206]/40 px-4 py-3">
+          <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">dual control</p>
+          <div className="mt-3 space-y-2">
+            <SignatoryRow role="buyer" party={mandate.buyer} />
+            <SignatoryRow role="risk officer" party={mandate.riskOfficer} />
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-[#030206]/40 px-4 py-3">
+          <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">approved dealers</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {mandate.approvedDealers.length === 0 ? (
+              <span className="font-mono text-[10px] text-zinc-600">none listed</span>
+            ) : (
+              mandate.approvedDealers.map((d) => (
+                <span
+                  key={d}
+                  className="rounded-full border border-border bg-card/70 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
+                >
+                  {d}
+                </span>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </HudPanel>
+  );
+}
+
+function SignatoryRow({ role, party }: { role: string; party: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+        <span className="size-1.5 rounded-full bg-primary" />
+        {role}
+      </span>
+      <span className="max-w-[60%] truncate font-mono text-[10.5px] text-foreground" title={party}>
+        {party}
+      </span>
     </div>
   );
 }
@@ -195,3 +308,11 @@ function NoData({ label }: { label: string }) {
 const fmtQty = (n: string): string => Number(n).toLocaleString("en-US", { maximumFractionDigits: 6 });
 const fmtPrice = (n: string): string => Number(n).toFixed(2);
 const tsFull = (iso: string): string => new Date(iso).toLocaleTimeString("en-US", { hour12: false });
+const tsStamp = (iso: string): string => {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("en-US", { month: "short", day: "2-digit" })} ${d.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })}`;
+};
