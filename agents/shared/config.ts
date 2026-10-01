@@ -44,6 +44,19 @@ export const CBTC_DEVNET: TokenInstrument = {
   ],
 };
 
+export const BETH_DEVNET: TokenInstrument = {
+  issuer: "beth-network::12207547956b2fbcc5c7b85ee3eeb13705b641e233fb17cebb4057d14e1a3f81bea6",
+  symbol: "BETH",
+  id: "BETH",
+  registryUrl: "https://api.utilities.digitalasset-dev.com",
+  decimals: 10,
+  supportedApis: [
+    "splice-api-token-holding-v1",
+    "splice-api-token-allocation-v1",
+    "splice-api-token-allocation-instruction-v1",
+  ],
+};
+
 export type SettlementNetwork = "localnet" | "devnet";
 
 export interface SettlementEnvironment {
@@ -53,6 +66,7 @@ export interface SettlementEnvironment {
   bitsafeApiUrl?: string;
   decentralizedPartyId?: string;
   cbtc: TokenInstrument;
+  beth: TokenInstrument;
 }
 
 const environmentValue = (name: string): string | undefined => {
@@ -68,6 +82,7 @@ export const settlementEnvironment = (): SettlementEnvironment => {
       participants: PARTICIPANTS,
       registryUrl: CBTC_DEVNET.registryUrl,
       cbtc: CBTC_DEVNET,
+      beth: BETH_DEVNET,
     };
   }
 
@@ -86,6 +101,7 @@ export const settlementEnvironment = (): SettlementEnvironment => {
     bitsafeApiUrl: environmentValue("SHADOWDESK_BITSAFE_API_URL"),
     decentralizedPartyId: environmentValue("SHADOWDESK_DECENTRALIZED_PARTY_ID"),
     cbtc: CBTC_DEVNET,
+    beth: BETH_DEVNET,
   };
 };
 
