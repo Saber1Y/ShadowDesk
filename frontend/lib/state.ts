@@ -33,6 +33,7 @@ export interface InstitutionalProjection {
   sealedQuotes: any[];
   deals: any[];
   receipts: any[];
+  mandates: any[];
 }
 
 export interface DashboardState {
@@ -94,7 +95,7 @@ export const loadDashboardState = async (): Promise<DashboardState> => {
   }
 
   const empty: DashboardState["public"] = { events: [], counts: { rfqs: 0, proposals: 0, sealed: 0, deals: 0, receipts: 0, assets: 0 } };
-  const emptyInst: DashboardState["institutional"] = { buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [] };
+  const emptyInst: DashboardState["institutional"] = { buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [], mandates: [] };
 
   if (!parties.buyer) {
     return {
@@ -201,6 +202,35 @@ const projectInstitutional = (buyerParty: string, records: RawCreated[]): Instit
   const sealedQuotes: any[] = [];
   const deals: any[] = [];
   const receipts: any[] = [];
+  const mandates: any[] = [];
+
+  // Mandates are resolved first so RFQs, sealed quotes, and receipts can be
+  // labelled with the envelope they were authorised under. A TreasuryMandate
+  // still on the ledger is one awaiting its second signature; Approving
+  // consumes it and leaves the reusable ApprovedMandate behind.
+  const mandateRefByCid = new Map<string, string>();
+  for (const r of records) {
+    const last = r.templateId.split(":").pop();
+    if (last !== "TreasuryMandate" && last !== "ApprovedMandate") continue;
+    const a = r.createArgument;
+    mandateRefByCid.set(r.contractId, a.reference);
+    mandates.push({
+      status: last === "ApprovedMandate" ? "ACTIVE" : "PENDING",
+      reference: a.reference,
+      buyer: partyHint(a.buyer),
+      riskOfficer: partyHint(a.riskOfficer),
+      approvedDealers: (a.approvedDealers ?? []).map((d: string) => partyHint(d)),
+      assetToBuy: a.assetToBuy,
+      settlementAsset: a.settlementAsset,
+      maxAmount: a.maxAmount,
+      maxPrice: a.maxPrice,
+      expiry: a.expiry,
+      approvedAt: last === "ApprovedMandate" ? a.approvedAt : null,
+      cid: shortCid(r.contractId),
+      at: r.createdAt,
+    });
+  }
+  mandates.sort((a, b) => String(a.at).localeCompare(String(b.at)));
 
   // Awarding consumes the RFQ, so an awarded request leaves the active set.
   // The sealed quote is the surviving record of it, so rebuild those rows
@@ -213,6 +243,8 @@ const projectInstitutional = (buyerParty: string, records: RawCreated[]): Instit
       reference: a.reference, assetToBuy: a.assetToBuy, settlementAsset: a.settlementAsset,
       amount: a.amount, maxPrice: a.maxPrice, expiry: a.expiry,
       dealers: (a.dealers ?? []).map((d: string) => partyHint(d)),
+      mandated: Boolean(a.mandate),
+      mandateRef: a.mandate ? mandateRefByCid.get(a.mandate) ?? null : null,
       cid: shortCid(r.contractId), at: r.createdAt, awarded: false,
     });
   }
@@ -225,6 +257,8 @@ const projectInstitutional = (buyerParty: string, records: RawCreated[]): Instit
       reference: a.rfqReference, assetToBuy: a.assetToBuy, settlementAsset: a.settlementAsset,
       amount: a.amount, maxPrice: a.maxPrice, expiry: a.expiry,
       dealers: (a.invitedDealers ?? []).map((d: string) => partyHint(d)),
+      mandated: Boolean(a.mandate),
+      mandateRef: a.mandate ? mandateRefByCid.get(a.mandate) ?? null : null,
       cid: shortCid(rfqCid), at: r.createdAt, awarded: true,
     });
   }
@@ -257,12 +291,14 @@ const projectInstitutional = (buyerParty: string, records: RawCreated[]): Instit
     } else if (last === "SettlementReceipt") {
       receipts.push({
         reference: a.reference, security: a.security?.symbol, quantity: a.quantity, unitPrice: a.unitPrice,
-        totalValue: a.totalValue, settledAt: a.settledAt, cid: shortCid(r.contractId),
+        totalValue: a.totalValue, settledAt: a.settledAt,
+        mandateRef: a.mandate ? mandateRefByCid.get(a.mandate) ?? null : null,
+        cid: shortCid(r.contractId),
       });
     }
   }
   void buyerParty;
-  return { buyerParty, assets, rfqs, proposals, sealedQuotes, deals, receipts };
+  return { buyerParty, assets, rfqs, proposals, sealedQuotes, deals, receipts, mandates };
 };
 
 const checkPrivacy = async (

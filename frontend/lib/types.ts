@@ -7,6 +7,22 @@ export interface PublicEventView {
   payload: "METADATA_ONLY" | "ENC_QUOTE" | "ENC_DVP";
 }
 
+export interface MandateView {
+  status: "ACTIVE" | "PENDING";
+  reference: string;
+  buyer: string;
+  riskOfficer: string;
+  approvedDealers: string[];
+  assetToBuy: string;
+  settlementAsset: string;
+  maxAmount: string;
+  maxPrice: string;
+  expiry: string;
+  approvedAt: string | null;
+  cid: string;
+  at: string;
+}
+
 export interface DashboardState {
   updatedAt: string;
   participants: { name: string; jsonApi: string; reachable: boolean; ledgerEnd: number | null }[];
@@ -18,11 +34,12 @@ export interface DashboardState {
   institutional: {
     buyerParty: string | null;
     assets: { holder: string; symbol: string; issuer: string; quantity: string; reference: string; cid: string; at: string }[];
-    rfqs: { reference: string; assetToBuy: string; settlementAsset: string; amount: string; maxPrice: string; expiry: string; dealers: string[]; cid: string; at: string; awarded: boolean }[];
+    rfqs: { reference: string; assetToBuy: string; settlementAsset: string; amount: string; maxPrice: string; expiry: string; dealers: string[]; mandated: boolean; mandateRef: string | null; cid: string; at: string; awarded: boolean }[];
     proposals: { rfqCid: string; rfqRef: string; dealer: string; offeredPrice: string; bidId: string; cid: string; at: string }[];
     sealedQuotes: { rfqCid: string; dealer: string; offeredPrice: string; bidId: string; cid: string; at: string }[];
     deals: { reference: string; security: string; quantity: string; unitPrice: string; cid: string; at: string }[];
-    receipts: { reference: string; security: string; quantity: string; unitPrice: string; totalValue: string; settledAt: string; cid: string }[];
+    receipts: { reference: string; security: string; quantity: string; unitPrice: string; totalValue: string; settledAt: string; mandateRef: string | null; cid: string }[];
+    mandates: MandateView[];
   };
   privacy: {
     checked: boolean;
