@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { CantonError, type CantonClient } from "./client.js";
+import { CantonError, envValue, type CantonClient } from "./client.js";
 import { CBTC_DEVNET, type TokenInstrument } from "./config.js";
 
 /**
@@ -75,14 +75,21 @@ const instrumentMatches = (view: any, instrument: TokenInstrument): boolean => {
 };
 
 /**
- * Call the token registry. It is a separate, unauthenticated service, so this
- * deliberately lives with the allocation adapter rather than on the ledger
- * client.
+ * Call the token registry.
+ *
+ * On DevNet the registry is authenticated with the same bearer token as the
+ * Ledger API, and the `daml_ledger_api` scope covers it. A choice-context call
+ * is made on behalf of the instrument admin, so an unauthenticated request is
+ * rejected before it can reveal whether the allocation exists.
  */
 const registryPost = async (registryUrl: string, path: string, body: unknown): Promise<any> => {
+  const accessToken = envValue("SHADOWDESK_CANTON_ACCESS_TOKEN");
   const resp = await fetch(`${registryUrl.replace(/\/+$/, "")}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
     body: JSON.stringify(body),
   });
   const text = await resp.text();
@@ -92,7 +99,20 @@ const registryPost = async (registryUrl: string, path: string, body: unknown): P
   } catch {
     json = text;
   }
-  if (!resp.ok) throw new CantonError(resp.status, json, `POST ${path} failed`);
+  if (!resp.ok) {
+    if (resp.status === 401 || resp.status === 403) {
+      throw new CantonError(
+        resp.status,
+        json,
+        `registry rejected the caller on ${path}. ` +
+          (accessToken
+            ? "The token is present but is not authorized to act as this instrument's admin. " +
+              "Minting an execute-transfer choice context runs as the registrar, so the login must be able to act as the admin party."
+            : "No SHADOWDESK_CANTON_ACCESS_TOKEN was sent. Use scripts/env/with-devnet-auth.sh to run against DevNet."),
+      );
+    }
+    throw new CantonError(resp.status, json, `POST ${path} failed`);
+  }
   return json;
 };
 
