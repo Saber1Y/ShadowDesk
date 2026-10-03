@@ -21,11 +21,55 @@ export const ALLOCATION_INTERFACE =
 export const ALLOCATION_FACTORY_INTERFACE =
   "#splice-api-token-allocation-instruction-v1:Splice.Api.Token.AllocationInstructionV1:AllocationFactory";
 
+export const HOLDING_INTERFACE_V2 =
+  "#splice-api-token-holding-v2:Splice.Api.Token.HoldingV2:Holding";
+export const ALLOCATION_INTERFACE_V2 =
+  "#splice-api-token-allocation-v2:Splice.Api.Token.AllocationV2:Allocation";
+export const ALLOCATION_FACTORY_INTERFACE_V2 =
+  "#splice-api-token-allocation-instruction-v2:Splice.Api.Token.AllocationInstructionV2:AllocationFactory";
+
 /** Interface versions are negotiated, not assumed, so these are fallbacks. */
 const FALLBACK_INTERFACES = {
   holding: HOLDING_INTERFACE,
   allocation: ALLOCATION_INTERFACE,
   allocationFactory: ALLOCATION_FACTORY_INTERFACE,
+};
+
+type InterfaceKind = keyof typeof FALLBACK_INTERFACES;
+
+/** Newest registry version first, because that is what a current registry mints. */
+const INTERFACES_BY_KIND: Record<InterfaceKind, ReadonlyArray<readonly [string, string]>> = {
+  holding: [
+    ["splice-api-token-holding-v2", HOLDING_INTERFACE_V2],
+    ["splice-api-token-holding-v1", HOLDING_INTERFACE],
+  ],
+  allocation: [
+    ["splice-api-token-allocation-v2", ALLOCATION_INTERFACE_V2],
+    ["splice-api-token-allocation-v1", ALLOCATION_INTERFACE],
+  ],
+  allocationFactory: [
+    ["splice-api-token-allocation-instruction-v2", ALLOCATION_FACTORY_INTERFACE_V2],
+    ["splice-api-token-allocation-instruction-v1", ALLOCATION_FACTORY_INTERFACE],
+  ],
+};
+
+/**
+ * Interfaces to query for an instrument, newest registry version first.
+ *
+ * An instrument advertises every API version it supports, and a party can hold
+ * contracts from more than one of them, so reading only one version reports a
+ * funded party as empty. The registry is the only authority on which versions
+ * exist for a given instrument, so these come from its advertised
+ * `supportedApis` rather than a hardcoded assumption.
+ */
+export const interfacesForInstrument = (
+  instrument: TokenInstrument,
+  kind: InterfaceKind,
+): string[] => {
+  const resolved = INTERFACES_BY_KIND[kind]
+    .filter(([api]) => instrument.supportedApis.includes(api))
+    .map(([, iface]) => iface);
+  return resolved.length > 0 ? resolved : [FALLBACK_INTERFACES[kind]];
 };
 
 const ALLOCATION_TEMPLATE_SUFFIX = ":Utility.Registry.V0.Holding.Allocation:DvpLegAllocation";
@@ -116,23 +160,32 @@ const registryPost = async (registryUrl: string, path: string, body: unknown): P
   return json;
 };
 
-/** All holdings of an instrument held by a party. */
+/** All holdings of an instrument held by a party, across every API version. */
 export const listHoldings = async (
   client: CantonClient,
   party: string,
   instrument: TokenInstrument,
-  holdingInterface = FALLBACK_INTERFACES.holding,
+  holdingInterface?: string,
 ): Promise<Holding[]> => {
   const offset = await client.ledgerEnd();
-  const rows = await client.queryByInterface(party, holdingInterface, offset);
-  return rows
-    .filter((row) => instrumentMatches(row.viewValue, instrument))
-    .map((row) => ({
-      contractId: row.contractId,
-      instrumentId: row.viewValue.instrumentId.id,
-      admin: row.viewValue.instrumentId.admin,
-      amount: row.viewValue.amount,
-    }));
+  const interfaces = holdingInterface
+    ? [holdingInterface]
+    : interfacesForInstrument(instrument, "holding");
+
+  const byContract = new Map<string, Holding>();
+  for (const iface of interfaces) {
+    const rows = await client.queryByInterface(party, iface, offset);
+    for (const row of rows) {
+      if (!instrumentMatches(row.viewValue, instrument)) continue;
+      byContract.set(row.contractId, {
+        contractId: row.contractId,
+        instrumentId: row.viewValue.instrumentId.id,
+        admin: row.viewValue.instrumentId.admin,
+        amount: row.viewValue.amount,
+      });
+    }
+  }
+  return [...byContract.values()];
 };
 
 /** The single holding an allocation leg will spend. Throws when absent. */
@@ -140,12 +193,14 @@ export const requireHolding = async (
   client: CantonClient,
   party: string,
   instrument: TokenInstrument,
-  holdingInterface = FALLBACK_INTERFACES.holding,
+  holdingInterface?: string,
 ): Promise<Holding> => {
   const holdings = await listHoldings(client, party, instrument, holdingInterface);
   const usable = holdings.filter((h) => Number(h.amount) > 0);
   if (usable.length === 0) {
-    throw new Error(`${party} holds no ${instrument.id} to allocate`);
+    throw new Error(
+      `${party} holds no ${instrument.id} to allocate; searched ${instrument.supportedApis.filter((a) => a.startsWith("splice-api-token-holding-")).join(", ") || "no advertised holding API"}`,
+    );
   }
   if (usable.length > 1) {
     throw new Error(
@@ -212,21 +267,39 @@ export const createAllocationLeg = async (
     { choiceArguments, excludeDebugFields: true },
   );
 
-  const tx = await client.exerciseRaw(
-    options.allocationFactoryInterface ?? FALLBACK_INTERFACES.allocationFactory,
-    factory.factoryId,
-    "AllocationFactory_Allocate",
-    {
-      ...choiceArguments,
-      extraArgs: {
-        context: factory.choiceContext.choiceContextData,
-        meta: { values: {} },
-      },
-    },
-    [request.sender],
-    { disclosedContracts: factory.choiceContext.disclosedContracts },
-    randomUUID(),
-  );
+  const factoryInterfaces = options.allocationFactoryInterface
+    ? [options.allocationFactoryInterface]
+    : interfacesForInstrument(request.instrument, "allocationFactory");
+
+  let tx: Awaited<ReturnType<CantonClient["exerciseRaw"]>> | undefined;
+  let lastError: unknown;
+  for (const iface of factoryInterfaces) {
+    try {
+      tx = await client.exerciseRaw(
+        iface,
+        factory.factoryId,
+        "AllocationFactory_Allocate",
+        {
+          ...choiceArguments,
+          extraArgs: {
+            context: factory.choiceContext.choiceContextData,
+            meta: { values: {} },
+          },
+        },
+        [request.sender],
+        { disclosedContracts: factory.choiceContext.disclosedContracts },
+        randomUUID(),
+      );
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!tx) {
+    throw new Error(
+      `allocation leg ${request.legId} could not exercise AllocationFactory_Allocate over ${factoryInterfaces.join(", ")}: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    );
+  }
 
   const created = (tx.transaction?.events ?? [])
     .map((event: any) => event.CreatedEvent)
@@ -247,34 +320,40 @@ export const listAllocationLegs = async (
   client: CantonClient,
   party: string,
   settlementRef: string,
-  options: { allocationInterface?: string; registryUrl?: string } = {},
+  options: { allocationInterface?: string; registryUrl?: string; instrument?: TokenInstrument } = {},
 ): Promise<AllocationLeg[]> => {
   const offset = await client.ledgerEnd();
-  const rows = await client.queryByInterface(
-    party,
-    options.allocationInterface ?? FALLBACK_INTERFACES.allocation,
-    offset,
-    { includeCreatedEventBlob: true },
-  );
-  const legs: AllocationLeg[] = [];
-  for (const row of rows) {
-    const view = row.viewValue;
-    const allocation = view?.allocation;
-    if (allocation?.settlement?.settlementRef?.id !== settlementRef) continue;
-    const leg = allocation.transferLeg;
-    legs.push({
-      contractId: row.contractId,
-      templateId: row.templateId,
-      legId: allocation.transferLegId,
-      instrumentId: leg.instrumentId.id,
-      admin: leg.instrumentId.admin,
-      sender: leg.sender,
-      receiver: leg.receiver,
-      amount: leg.amount,
-      registryUrl: options.registryUrl,
+  const interfaces = options.allocationInterface
+    ? [options.allocationInterface]
+    : options.instrument
+      ? interfacesForInstrument(options.instrument, "allocation")
+      : [FALLBACK_INTERFACES.allocation];
+
+  const legs = new Map<string, AllocationLeg>();
+  for (const iface of interfaces) {
+    const rows = await client.queryByInterface(party, iface, offset, {
+      includeCreatedEventBlob: true,
     });
+    for (const row of rows) {
+      if (legs.has(row.contractId)) continue;
+      const view = row.viewValue;
+      const allocation = view?.allocation;
+      if (allocation?.settlement?.settlementRef?.id !== settlementRef) continue;
+      const leg = allocation.transferLeg;
+      legs.set(row.contractId, {
+        contractId: row.contractId,
+        templateId: row.templateId,
+        legId: allocation.transferLegId,
+        instrumentId: leg.instrumentId.id,
+        admin: leg.instrumentId.admin,
+        sender: leg.sender,
+        receiver: leg.receiver,
+        amount: leg.amount,
+        registryUrl: options.registryUrl,
+      });
+    }
   }
-  return legs;
+  return [...legs.values()];
 };
 
 /**
@@ -360,36 +439,45 @@ export const findAllocationLegsByCid = async (
   client: CantonClient,
   parties: string[],
   contractIds: string[],
-  options: { allocationInterface?: string; registryUrl?: string } = {},
+  options: {
+    allocationInterface?: string;
+    registryUrl?: string;
+    instrument?: TokenInstrument;
+  } = {},
 ): Promise<Map<string, AllocationLeg>> => {
   const wanted = new Set(contractIds);
   if (wanted.size === 0) return new Map();
 
   const offset = await client.ledgerEnd();
+  const interfaces = options.allocationInterface
+    ? [options.allocationInterface]
+    : options.instrument
+      ? interfacesForInstrument(options.instrument, "allocation")
+      : [FALLBACK_INTERFACES.allocation];
+
   const found = new Map<string, AllocationLeg>();
   for (const party of parties) {
-    const rows = await client.queryByInterface(
-      party,
-      options.allocationInterface ?? FALLBACK_INTERFACES.allocation,
-      offset,
-      { includeCreatedEventBlob: true },
-    );
-    for (const row of rows) {
-      if (!wanted.has(row.contractId) || found.has(row.contractId)) continue;
-      const allocation = (row.viewValue as any)?.allocation;
-      const leg = allocation?.transferLeg;
-      if (!leg) continue;
-      found.set(row.contractId, {
-        contractId: row.contractId,
-        templateId: row.templateId,
-        legId: allocation.transferLegId,
-        instrumentId: leg.instrumentId.id,
-        admin: leg.instrumentId.admin,
-        sender: leg.sender,
-        receiver: leg.receiver,
-        amount: leg.amount,
-        registryUrl: options.registryUrl,
+    for (const iface of interfaces) {
+      const rows = await client.queryByInterface(party, iface, offset, {
+        includeCreatedEventBlob: true,
       });
+      for (const row of rows) {
+        if (!wanted.has(row.contractId) || found.has(row.contractId)) continue;
+        const allocation = (row.viewValue as any)?.allocation;
+        const leg = allocation?.transferLeg;
+        if (!leg) continue;
+        found.set(row.contractId, {
+          contractId: row.contractId,
+          templateId: row.templateId,
+          legId: allocation.transferLegId,
+          instrumentId: leg.instrumentId.id,
+          admin: leg.instrumentId.admin,
+          sender: leg.sender,
+          receiver: leg.receiver,
+          amount: leg.amount,
+          registryUrl: options.registryUrl,
+        });
+      }
     }
   }
   return found;

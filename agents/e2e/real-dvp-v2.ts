@@ -148,7 +148,7 @@ const main = async (): Promise<void> => {
     client,
     [parties.buyer, parties.dealer],
     [legs.securityLegId, legs.paymentLegId],
-    { registryUrl: security.registryUrl },
+    { registryUrl: security.registryUrl, instrument: security.instrument },
   );
   const securityLeg = resolved.get(legs.securityLegId);
   const paymentLeg = resolved.get(legs.paymentLegId);

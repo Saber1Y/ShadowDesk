@@ -30,6 +30,9 @@ export interface TokenInstrument extends AssetIdSpec {
 export const CUSDC: AssetIdSpec = { issuer: "ShadowDesk", symbol: "cUSDC" };
 export const CTBILL: AssetIdSpec = { issuer: "ShadowDesk", symbol: "cTBILL" };
 
+// `supportedApis` mirrors the instrument's live registry metadata. Both
+// DevNet instruments currently advertise v1 and v2 of every API, so the
+// adapter reads both instead of assuming one; see interfacesForInstrument.
 export const CBTC_DEVNET: TokenInstrument = {
   issuer: "cbtc-network::12202a83c6f4082217c175e29bc53da5f2703ba2675778ab99217a5a881a949203ff",
   symbol: "CBTC",
@@ -37,9 +40,15 @@ export const CBTC_DEVNET: TokenInstrument = {
   registryUrl: "https://api.utilities.digitalasset-dev.com",
   decimals: 10,
   supportedApis: [
+    "splice-api-token-metadata-v1",
+    "splice-api-token-holding-v1",
     "splice-api-token-holding-v2",
+    "splice-api-token-allocation-v1",
     "splice-api-token-allocation-v2",
+    "splice-api-token-allocation-request-v1",
+    "splice-api-token-allocation-instruction-v1",
     "splice-api-token-allocation-instruction-v2",
+    "splice-api-token-transfer-instruction-v1",
     "splice-api-token-transfer-instruction-v2",
   ],
 };
@@ -51,9 +60,16 @@ export const BETH_DEVNET: TokenInstrument = {
   registryUrl: "https://api.utilities.digitalasset-dev.com",
   decimals: 10,
   supportedApis: [
+    "splice-api-token-metadata-v1",
     "splice-api-token-holding-v1",
+    "splice-api-token-holding-v2",
     "splice-api-token-allocation-v1",
+    "splice-api-token-allocation-v2",
+    "splice-api-token-allocation-request-v1",
     "splice-api-token-allocation-instruction-v1",
+    "splice-api-token-allocation-instruction-v2",
+    "splice-api-token-transfer-instruction-v1",
+    "splice-api-token-transfer-instruction-v2",
   ],
 };
 
