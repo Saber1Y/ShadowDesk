@@ -169,8 +169,22 @@ const main = async (): Promise<void> => {
   if (winner.dealer !== dealerParty) {
     throw new Error(`expected dealerA to win on price, got ${winner.dealer}`);
   }
+  // Best-execution evidence. The ledger cannot enumerate proposals, so it cannot
+  // verify that the buyer took the cheapest; what it can do is record every bid
+  // immutably, which makes the buyer's choice checkable after the fact against
+  // the bids it published. Ranking them here states the claim explicitly.
+  const ranked = [...proposals].sort(
+    (a, b) => Number(a.offeredPrice) - Number(b.offeredPrice) || a.bidId.localeCompare(b.bidId),
+  );
+  for (const [i, bid] of ranked.entries()) {
+    console.log(
+      `  rank ${i + 1} ${bid.dealer.split("::")[0]} ${bid.offeredPrice} ${bid.bidId}${bid.bidId === winner.bidId ? "  <- awarded" : ""}`,
+    );
+  }
+  const runnerUp = ranked.find((b) => b.bidId !== winner.bidId);
+  const saving = runnerUp ? Number(runnerUp.offeredPrice) - Number(winner.offeredPrice) : Number(winner.offeredPrice);
   console.log(
-    `[venue] ${proposals.length} proposals; ${SELECTION_POLICY} awards dealerA at ${winner.offeredPrice} (dealerB was dearer)`,
+    `[venue] ${SELECTION_POLICY} awards dealerA at ${winner.offeredPrice}; ${ranked.length} bids published, best saving ${saving.toFixed(10)} against ${runnerUp?.offeredPrice ?? "n/a"}`,
   );
 
   const sealedTx = await buyer.client.exercise(
