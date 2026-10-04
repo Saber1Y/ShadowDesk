@@ -27,6 +27,23 @@ const FAUCET_API_URL =
 /** The smallest claim the faucet will make, so topping up stays cheap. */
 const TOP_UP = { cbtc: "0.01", beth: "0.02" } as const;
 
+/**
+ * Keep at least this much of each instrument on hand.
+ *
+ * Every settled trade consumes the dealer's delivering balance, so funding only
+ * from zero left the dealer unable to trade a second time and made each demo
+ * run a one-shot. A floor tops the balance back up instead, while still refusing
+ * to inflate a balance that is already sufficient.
+ */
+const MIN_HOLD = { cbtc: "0.01", beth: "0.02" } as const;
+
+/** Parse a registry-native decimal such as "0.01" into base units. */
+const toBaseUnits = (decimal: string, decimals: number): bigint => {
+  const [whole, fraction = ""] = decimal.split(".");
+  const padded = (fraction + "0".repeat(decimals)).slice(0, decimals);
+  return BigInt(whole || "0") * 10n ** BigInt(decimals) + BigInt(padded || "0");
+};
+
 const requiredEnv = (name: string): string => {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required to fund the settlement parties`);
@@ -99,14 +116,16 @@ const main = async (): Promise<void> => {
     }
 
     const held = await heldBaseUnits(client, target.party, target.instrument);
-    const scale = 10n ** BigInt(target.instrument.decimals);
-    const heldDecimal = Number(held) / Number(scale);
+    const heldDecimal = Number(held) / Number(10n ** BigInt(target.instrument.decimals));
     console.log(
       `[faucet] ${target.role} holds ${heldDecimal.toFixed(target.instrument.decimals)} ${target.token.toUpperCase()}`,
     );
 
-    if (held > 0n) {
-      console.log(`[faucet] ${target.role} already funded; skipping to avoid inflating balances`);
+    const floorUnits = toBaseUnits(MIN_HOLD[target.token as keyof typeof MIN_HOLD], target.instrument.decimals);
+    if (held >= floorUnits) {
+      console.log(
+        `[faucet] ${target.role} already holds at least the ${MIN_HOLD[target.token as keyof typeof MIN_HOLD]} floor; skipping to avoid inflating balances`,
+      );
       continue;
     }
 
