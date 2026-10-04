@@ -13,7 +13,8 @@
     "faucet:fund": "tsx e2e/faucet-fund.ts",
     "e2e:atomic-submit": "tsx e2e/atomic-submit-check.ts",
     "e2e:v2-settlement": "tsx e2e/v2-settlement-check.ts",
-    "e2e:real-flow": "tsx e2e/real-flow-check.ts"
+    "e2e:real-flow": "tsx e2e/real-flow-check.ts",
+    "e2e:real-guard": "tsx e2e/real-guard-check.ts"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
