@@ -84,52 +84,47 @@ const main = async (): Promise<void> => {
     }
   }
 
-  // Registry allocations reserve the real holdings for the whole round, so the
-  // balances cannot be spent by anything else while the workflow is running.
   const settlementRef = `SHADOWDESK-E2E-${Date.now()}`;
   const executor = buyerParty;
-  await createDvpLegs(ledger, {
-    executor,
-    settlementRef,
-    security: {
-      instrument: delivered,
-      sender: dealerParty,
-      receiver: buyerParty,
-      amount: quantity,
-      legId: "security",
-    },
-    payment: {
-      instrument: payment,
-      sender: buyerParty,
-      receiver: dealerParty,
-      amount: payAmount,
-      legId: "payment",
-    },
-  });
-  console.log(`[registry] both legs reserved under ${settlementRef}`);
 
   // --- venue workflow, against the deployed package ---
   const buyer = new BuyerAgent(PARTICIPANTS.participant1.jsonApi, PARTICIPANTS.participant1.name);
   // The hint is resolved to a party by convention on DevNet:
   // "dealerA" -> SHADOWDESK_DEALER_A_PARTY.
-  const dealer = new DealerAgent(
+  // Two dealers compete so the award exercises the selection policy rather than
+  // a single bid. Dealer B quotes one notch dearer, so the deterministic winner
+  // must be dealer A.
+  const dealerPartyB = required("SHADOWDESK_DEALER_B_PARTY");
+  const dealerA = new DealerAgent(
     PARTICIPANTS.participant1.jsonApi,
     PARTICIPANTS.participant1.name,
     "dealerA",
     fixedPricePolicy(unitPrice),
   );
+  const dealerB = new DealerAgent(
+    PARTICIPANTS.participant1.jsonApi,
+    PARTICIPANTS.participant1.name,
+    "dealerB",
+    fixedPricePolicy(Number((unitPrice * 1.1).toFixed(10))),
+  );
   await buyer.provision();
-  await dealer.provision();
+  await dealerA.provision();
+  await dealerB.provision();
 
   // `Deal.Settle` asserts the locked security quantity equals the deal quantity
   // exactly, while it only requires the cash to cover it, so the inventory is
   // created at precisely the deal size and the cash at a surplus.
   const cashCid = await buyer.ensureCash(payment, Number(payUnits * 2n));
-  const inventoryCid = await dealer.ensureInventory(delivered, Number(securityUnits));
+  const inventoryA = await dealerA.ensureInventory(delivered, Number(securityUnits));
+  const inventoryB = await dealerB.ensureInventory(delivered, Number(securityUnits));
+  const inventoryByParty = new Map<string, string>([
+    [dealerParty, inventoryA],
+    [dealerPartyB, inventoryB],
+  ]);
   registerSettlementIntent({
     dealerParty,
     securitySymbol: delivered.id,
-    securityCid: inventoryCid,
+    securityCid: inventoryA,
     quantity: Number(securityUnits),
     participant: PARTICIPANTS.participant1.name,
   });
@@ -140,23 +135,43 @@ const main = async (): Promise<void> => {
     assetToBuy: delivered,
     settlementAsset: payment,
   };
-  const spec = defaultRfq(1, [dealerParty], overrides);
+  const spec = defaultRfq(2, [dealerParty, dealerPartyB], overrides);
   spec.mandate = { riskOfficer, maxAmount: Number(securityUnits) };
 
   console.log(`[buyer] RFQ ${spec.reference}: ${securityUnits} ${delivered.id} max@${unitPrice}`);
   const rfqCid = await buyer.createRfq(spec);
 
-  const observed = await dealer.observeRfqs(60_000);
-  const mine = observed.find((r) => r.cid === rfqCid) ?? observed[0];
-  if (!mine) throw new Error("dealer did not observe the RFQ");
-  const propCid = await dealer.quoteOn(mine.cid, mine.arg);
-  if (!propCid) throw new Error("dealer did not quote");
-  console.log(`[dealer] quoted, proposal=${propCid.slice(0, 16)}...`);
+  for (const agent of [dealerA, dealerB]) {
+    const observed = await agent.observeRfqs(60_000);
+    const mine = observed.find((r) => r.cid === rfqCid) ?? observed[0];
+    if (!mine) throw new Error(`${agent.dealerPartyHint} did not observe the RFQ`);
+    const propCid = await agent.quoteOn(mine.cid, mine.arg);
+    if (!propCid) throw new Error(`${agent.dealerPartyHint} did not quote`);
+    console.log(`[${agent.dealerPartyHint}] quoted, proposal=${propCid.slice(0, 16)}...`);
+  }
 
   const proposals = await buyer.collectProposals(rfqCid, 60_000);
+  if (proposals.length < 2) {
+    throw new Error(`expected 2 competing proposals, collected ${proposals.length}`);
+  }
+  // The award must follow the declared policy, not happen to look right: dealer A
+  // quotes the unit price and dealer B 10% above it, so the cheapest must win.
+  const cheapest = [...proposals].sort(
+    (a, b) => Number(a.offeredPrice) - Number(b.offeredPrice) || a.bidId.localeCompare(b.bidId),
+  )[0];
   const winner = selectWinner(proposals, spec.maxPrice);
   if (!winner) throw new Error("no proposal within maxPrice");
-  console.log(`[venue] winner dealer=${winner.dealer.split("::")[0]} price=${winner.offeredPrice}`);
+  if (winner.bidId !== cheapest.bidId) {
+    throw new Error(
+      `${SELECTION_POLICY} selected ${winner.bidId} at ${winner.offeredPrice} over the cheapest ${cheapest.bidId} at ${cheapest.offeredPrice}`,
+    );
+  }
+  if (winner.dealer !== dealerParty) {
+    throw new Error(`expected dealerA to win on price, got ${winner.dealer}`);
+  }
+  console.log(
+    `[venue] ${proposals.length} proposals; ${SELECTION_POLICY} awards dealerA at ${winner.offeredPrice} (dealerB was dearer)`,
+  );
 
   const sealedTx = await buyer.client.exercise(
     "QuoteProposal",
@@ -178,9 +193,33 @@ const main = async (): Promise<void> => {
   console.log(`[venue] sealed under policy=${SELECTION_POLICY}; no other dealer can see it`);
 
   // --- settlement: receipt and real tokens in one update ---
+  // The registry legs are reserved only now that the counterparty is known: the
+  // losing dealer never delivers anything, so reserving before the award would
+  // lock a second dealer's balance for a trade that never happens.
+  const dealerPartyLeg = winner.dealer;
+  await createDvpLegs(ledger, {
+    executor,
+    settlementRef,
+    security: {
+      instrument: delivered,
+      sender: dealerPartyLeg,
+      receiver: buyerParty,
+      amount: quantity,
+      legId: "security",
+    },
+    payment: {
+      instrument: payment,
+      sender: buyerParty,
+      receiver: dealerPartyLeg,
+      amount: payAmount,
+      legId: "payment",
+    },
+  });
+  console.log(`[registry] both legs reserved under ${settlementRef} for the awarded dealer`);
+
   const legs = new Map<string, any>();
   for (const [party, instrument] of [
-    [dealerParty, delivered],
+    [dealerPartyLeg, delivered],
     [buyerParty, payment],
   ] as const) {
     for (const leg of await listAllocationLegs(ledger, party, settlementRef, {
@@ -192,7 +231,7 @@ const main = async (): Promise<void> => {
   if (legs.size === 0) throw new Error("no allocation legs resolved before settlement");
 
   const balancesBefore = {
-    dealer: await total(dealerParty, delivered),
+    dealer: await total(dealerPartyLeg, delivered),
     buyer: await total(buyerParty, delivered),
   };
 
@@ -204,7 +243,7 @@ const main = async (): Promise<void> => {
     quantity: Number(securityUnits),
     unitPrice: Number(winner.offeredPrice),
     paymentCid: cashCid,
-    securityCid: inventoryCid,
+    securityCid: inventoryByParty.get(dealerPartyLeg)!,
     // Daml's `AssetId` is `{ issuer, symbol }`; the registry instrument also
     // carries transport fields that must not be sent to the ledger.
     settlementAsset: { issuer: payment.issuer, symbol: payment.id },
@@ -220,7 +259,7 @@ const main = async (): Promise<void> => {
   console.log(`[settle] receipt security=${JSON.stringify((receipt as any).security)}`);
 
   const balancesAfter = {
-    dealer: await total(dealerParty, delivered),
+    dealer: await total(dealerPartyLeg, delivered),
     buyer: await total(buyerParty, delivered),
   };
   console.log(`[settle] dealer ${delivered.id} ${balancesBefore.dealer} -> ${balancesAfter.dealer}`);
