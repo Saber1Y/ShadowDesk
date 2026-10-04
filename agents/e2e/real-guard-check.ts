@@ -23,6 +23,15 @@ if (env.network !== "devnet") {
   throw new Error("this check needs SHADOWDESK_NETWORK=devnet");
 }
 
+/**
+ * The Daml assertion text sits at the end of a long interpretation error, so the
+ * tail is what actually says which guard fired.
+ */
+const assertionText = (raw: string): string => {
+  const tail = raw.slice(-140).replace(/\s+/g, " ").trim();
+  return tail;
+};
+
 const required = (name: string): string => {
   const v = envValue(name);
   if (!v) throw new Error(`${name} is required`);
@@ -84,8 +93,91 @@ const main = async (): Promise<void> => {
   };
   const spec = defaultRfq(1, [dealerParty], overrides);
   spec.mandate = { riskOfficer, maxAmount: mandateMax };
+  // The mandate's real control point is OpenRfq, which refuses an envelope the
+  // mandate cannot cover. That guard is reachable on its own, unlike the
+  // settlement-time mandate check, so it is asserted before anything is quoted.
+  //
+  // The mandate is built explicitly rather than through `createRfq`, because that
+  // helper derives the mandate's own maxPrice from the requested RFQ price, which
+  // would raise the cap at the same time and make a price breach inexpressible.
+  const openRfqDirect = async (
+    attempt: { amount: number; maxPrice: number; dealers: string[] },
+  ): Promise<string> => {
+    const ref = `MANDATE-GUARD-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    const expiry = new Date(Date.now() + 24 * 3600e3).toISOString();
+    const mandateTx = await buyer.client.create(
+      "TreasuryMandate",
+      {
+        buyer: buyerParty,
+        riskOfficer,
+        approvedDealers: [dealerParty],
+        assetToBuy: instrument.symbol,
+        settlementAsset: instrument.symbol,
+        maxAmount: String(mandateMax),
+        maxPrice: String(unitPrice),
+        reference: ref,
+        expiry,
+      },
+      [buyerParty, riskOfficer],
+      `cmd-mandate-${ref}`,
+    );
+    const mandateCid = (mandateTx.transaction.events as any[])
+      .map((e: any) => e.CreatedEvent)
+      .filter(Boolean)
+      .find((e: any) => e.templateId.endsWith(":ShadowDesk.Rfq:TreasuryMandate"))?.contractId;
+    if (!mandateCid) throw new Error("guard mandate not created");
+    const approvalTx = await buyer.client.exercise(
+      "TreasuryMandate",
+      mandateCid,
+      "Approve",
+      {},
+      [buyerParty, riskOfficer],
+      `cmd-approve-${ref}`,
+    );
+    const approvedCid = (approvalTx.transaction.events as any[])
+      .map((e: any) => e.CreatedEvent)
+      .filter(Boolean)
+      .find((e: any) => e.templateId.endsWith(":ShadowDesk.Rfq:ApprovedMandate"))?.contractId;
+    if (!approvedCid) throw new Error("guard mandate not approved");
+    const rfqTx = await buyer.client.exercise(
+      "ApprovedMandate",
+      approvedCid,
+      "OpenRfq",
+      {
+        dealers: attempt.dealers,
+        amount: String(attempt.amount),
+        maxPrice: String(attempt.maxPrice),
+        reference: `RFQ-${ref}`,
+        expiry,
+      },
+      [buyerParty],
+      `cmd-open-${ref}`,
+    );
+    return (rfqTx.transaction.events as any[])
+      .map((e: any) => e.CreatedEvent)
+      .filter(Boolean)
+      .find((e: any) => e.templateId.endsWith(":ShadowDesk.Rfq:BlockTradeRFQ"))?.contractId ?? "";
+  };
+
+  for (const [label, attempt] of [
+    ["amount", { amount: mandateMax * 2, maxPrice: unitPrice, dealers: [dealerParty] }],
+    ["max price", { amount: mandateMax, maxPrice: unitPrice * 2, dealers: [dealerParty] }],
+  ] as Array<[string, { amount: number; maxPrice: number; dealers: string[] }]>) {
+    let refusal = "";
+    try {
+      const cid = await openRfqDirect(attempt);
+      refusal = cid ? "" : "no RFQ produced";
+    } catch (e: any) {
+      refusal = String(e?.causeJson?.cause ?? e?.message ?? e);
+    }
+    if (!refusal) {
+      throw new Error(`an RFQ breaching the mandate on ${label} was accepted`);
+    }
+    console.log(`[guard] RFQ over mandate on ${label} refused: ...${assertionText(refusal)}`);
+  }
+
   const rfqCid = await buyer.createRfq(spec);
-  console.log(`[buyer] RFQ under a mandate capped at ${mandateMax} base units`);
+  console.log(`[buyer] RFQ under a mandate capped at ${mandateMax} base units accepted`);
 
   const observed = await dealer.observeRfqs(60_000);
   const mine = observed.find((r) => r.cid === rfqCid) ?? observed[0];
@@ -194,7 +286,7 @@ const main = async (): Promise<void> => {
   if (!rejected) {
     throw new Error("a Deal exceeding its mandate was accepted; the guard did not hold");
   }
-  console.log(`[guard] rejected on-ledger: ${rejected.slice(0, 160)}`);
+  console.log(`[guard] rejected on-ledger: ...${assertionText(rejected)}`);
 
   const after = { dealer: await total(dealerParty), buyer: await total(buyerParty) };
   const moved = Math.abs(after.dealer - before.dealer) > 1e-9 || Math.abs(after.buyer - before.buyer) > 1e-9;
