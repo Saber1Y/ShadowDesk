@@ -59,7 +59,15 @@ export class CantonClient {
       json = body;
     }
     if (!resp.ok) {
-      throw new CantonError(resp.status, json, `POST ${path} failed`);
+      // A failed exercise reports the real reason in `cause` (an unresolved
+      // registry template, an unauthorised choice, ...). Without it every
+      // registry failure collapses into the same opaque "POST ... failed".
+      const cause = json?.cause ?? json?.details ?? json?.reason;
+      throw new CantonError(
+        resp.status,
+        json,
+        `POST ${path} failed with HTTP ${resp.status}${cause ? `: ${String(cause).slice(0, 300)}` : ""}`,
+      );
     }
     return json;
   }
@@ -145,7 +153,7 @@ export class CantonClient {
     activeAtOffset: number,
     options: { includeCreatedEventBlob?: boolean } = {},
   ): Promise<InterfaceCreatedEvent[]> {
-    const identifierFilter = {
+    const interfaceFilter = {
       InterfaceFilter: {
         value: {
           interfaceId,
@@ -154,12 +162,18 @@ export class CantonClient {
         },
       },
     };
+    // The filters must be nested under `eventFormat`. A top-level `filter`
+    // plus `verbose` is the older request shape and is accepted without error
+    // while being ignored, which returns contracts with no interface views and
+    // makes every interface query look like an empty result.
     const j = await this.req("/v2/state/active-contracts", {
       method: "POST",
       body: JSON.stringify({
         activeAtOffset,
-        filter: { filtersByParty: { [party]: { cumulative: [identifierFilter] } } },
-        verbose: true,
+        eventFormat: {
+          filtersByParty: { [party]: { cumulative: [interfaceFilter] } },
+          verbose: true,
+        },
       }),
     });
     const out: InterfaceCreatedEvent[] = [];
@@ -179,6 +193,42 @@ export class CantonClient {
     return out;
   }
 
+  /**
+   * Every active contract visible to a party, unfiltered.
+   *
+   * Used as a fallback when the ledger does not apply identifier filters: some
+   * participants accept a filtered request but return the party's entire active
+   * contract set, so callers filter the result themselves instead of trusting
+   * an empty or unfiltered server response.
+   */
+  async queryAllContracts(party: string, activeAtOffset: number): Promise<CreatedEvent[]> {
+    const filtersByParty: Record<string, unknown> = {};
+    filtersByParty[party] = { cumulative: [{ wildcardFilter: { value: {} } }] };
+    const j = await this.req("/v2/state/active-contracts", {
+      method: "POST",
+      body: JSON.stringify({
+        activeAtOffset,
+        eventFormat: { filtersByParty, verbose: false },
+      }),
+    });
+    const out: CreatedEvent[] = [];
+    for (const entry of Array.isArray(j) ? j : []) {
+      const created = entry?.contractEntry?.JsActiveContract?.createdEvent;
+      if (!created) continue;
+      out.push({
+        offset: created.offset,
+        nodeId: created.nodeId,
+        contractId: created.contractId,
+        templateId: created.templateId,
+        createArgument: (created.createArgument ?? {}) as Record<string, unknown>,
+        signatories: created.signatories ?? [],
+        observers: created.observers ?? [],
+        witnessParties: created.witnessParties ?? [],
+      });
+    }
+    return out;
+  }
+
   async ledgerEnd(): Promise<number> {
     const j = await this.req("/v2/state/ledger-end");
     return j.offset as number;
@@ -188,6 +238,60 @@ export class CantonClient {
     const j = await this.req("/v2/packages");
     return (j.packageIds ?? []) as string[];
   }
+
+  /**
+   * Fail before an exercise when a template's package is not installed here.
+   *
+   * A missing package is reported by the Ledger as the same opaque
+   * "Invalid template" 400 whether the template itself is unknown or merely one
+   * of its dependencies is absent. Registry-supplied exercises are the trap:
+   * they carry disclosed contracts created under whichever package was current
+   * at the time, so an old contract makes the whole exercise fail even when the
+   * registry's own package is installed. Naming the package first turns an
+   * unactionable error into an installable one.
+   */
+  async requirePackages(templateIds: ReadonlyArray<string | undefined>, label: string): Promise<void> {
+    const needed = [...new Set(
+      templateIds
+        .filter((t): t is string => typeof t === "string" && t.includes(":"))
+        .map((t) => ({ packageId: t.split(":")[0]!, templateId: t })),
+    )];
+    if (needed.length === 0) return;
+
+    this.installedPackages ??= this.packageIds();
+    let installed: string[];
+    try {
+      installed = await this.installedPackages;
+    } catch {
+      // The preflight is a diagnostic, never a gate: if the known-package list
+      // cannot be read, let the exercise itself decide rather than failing on
+      // a guess.
+      return;
+    }
+    if (installed.length === 0) return;
+    const known = new Set(installed);
+    const missing = new Map<string, string[]>();
+    for (const { packageId, templateId } of needed) {
+      if (known.has(packageId)) continue;
+      missing.set(packageId, [...(missing.get(packageId) ?? []), templateId]);
+    }
+    if (missing.size === 0) return;
+
+    const detail = [...missing]
+      .map(([packageId, templates]) => `  ${packageId}\n    used by ${[...new Set(templates)].join("\n            ")}`)
+      .join("\n");
+    throw new Error(
+      `${label} needs ${missing.size} package(s) that this participant does not have:\n${detail}\n` +
+        "A registry keeps long-lived contracts, so an allocation factory or holding can be created under an " +
+        "older package release than the one this participant holds, and the ledger then reports only " +
+        "\"Invalid template\". Install the missing package on every participant that signs, or have the " +
+        "registry re-create those contracts under a current release. On a hosted network where package " +
+        "upload is rejected (HTTP 403), only the registry can retire the old package, so this instrument " +
+        "cannot be settled from this participant until it does.",
+    );
+  }
+
+  private installedPackages: Promise<string[]> | undefined;
 
   async listParties(): Promise<Party[]> {
     const j = await this.req("/v2/parties");
