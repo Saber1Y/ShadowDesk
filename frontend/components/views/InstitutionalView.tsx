@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { BadgeCheck, Check, CircleDot, Landmark, ReceiptText, Send, ShieldCheck, WalletCards, X } from "lucide-react";
 import { HudPanel, Metric, StatusPill } from "../hud";
 import { RealTokenPanel } from "./RealTokenPanel";
+import { BestExecutionPanel } from "./BestExecutionPanel";
 import type { DashboardState, MandateView } from "@/lib/types";
 
 export function InstitutionalView({ state }: { state: DashboardState }) {
@@ -186,6 +187,7 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
           )}
         </HudPanel>
       </div>
+      <BestExecutionPanel state={state} />
       <RealTokenPanel state={state} />
     </div>
   );
