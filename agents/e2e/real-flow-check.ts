@@ -5,6 +5,7 @@ import { PARTICIPANTS, settlementEnvironment, type TokenInstrument } from "../sh
 import { settleDeal, registerSettlementIntent } from "../shared/settlement.js";
 import {
   cancelDanglingAllocations,
+  formatTokenAmount,
   createDvpLegs,
   listHoldings,
   listAllocationLegs,
@@ -52,13 +53,14 @@ const main = async (): Promise<void> => {
   const dealerParty = required("SHADOWDESK_DEALER_A_PARTY");
   const riskOfficer = required("SHADOWDESK_RISK_OFFICER_PARTY");
 
-  const quantity = num("SHADOWDESK_E2E_QUANTITY", 0.03);
+  // Quantities are given in base units, as everywhere else in this project and in
+  // the dashboard's request form. The registry, by contrast, wants a fixed-point
+  // decimal string, so the conversion happens here at the boundary.
+  const securityUnits = BigInt(Math.round(num("SHADOWDESK_E2E_QUANTITY", 0.03 * 10 ** delivered.decimals)));
   const unitPrice = num("SHADOWDESK_E2E_UNIT_PRICE", 1);
-  const payAmount = Number((quantity * unitPrice).toFixed(10));
-
-  // The workflow records quantities in the instrument's base units.
-  const securityUnits = Math.ceil(quantity * 10 ** delivered.decimals);
-  const payUnits = Math.ceil(payAmount * 10 ** payment.decimals);
+  const quantity = formatTokenAmount(securityUnits, delivered.decimals);
+  const payUnits = BigInt(Math.round(Number(quantity) * unitPrice * 10 ** payment.decimals));
+  const payAmount = formatTokenAmount(payUnits, payment.decimals);
 
   const ledger = new CantonClient(PARTICIPANTS.participant1.jsonApi, PARTICIPANTS.participant1.name);
   const total = async (party: string, instrument: TokenInstrument): Promise<number> =>
@@ -93,14 +95,14 @@ const main = async (): Promise<void> => {
       instrument: delivered,
       sender: dealerParty,
       receiver: buyerParty,
-      amount: quantity.toFixed(10),
+      amount: quantity,
       legId: "security",
     },
     payment: {
       instrument: payment,
       sender: buyerParty,
       receiver: dealerParty,
-      amount: payAmount.toFixed(10),
+      amount: payAmount,
       legId: "payment",
     },
   });
@@ -122,24 +124,24 @@ const main = async (): Promise<void> => {
   // `Deal.Settle` asserts the locked security quantity equals the deal quantity
   // exactly, while it only requires the cash to cover it, so the inventory is
   // created at precisely the deal size and the cash at a surplus.
-  const cashCid = await buyer.ensureCash(payment, payUnits * 2);
-  const inventoryCid = await dealer.ensureInventory(delivered, securityUnits);
+  const cashCid = await buyer.ensureCash(payment, Number(payUnits * 2n));
+  const inventoryCid = await dealer.ensureInventory(delivered, Number(securityUnits));
   registerSettlementIntent({
     dealerParty,
     securitySymbol: delivered.id,
     securityCid: inventoryCid,
-    quantity: securityUnits,
+    quantity: Number(securityUnits),
     participant: PARTICIPANTS.participant1.name,
   });
 
   const overrides: RfqOverrides = {
-    amount: securityUnits,
+    amount: Number(securityUnits),
     maxPrice: unitPrice,
     assetToBuy: delivered,
     settlementAsset: payment,
   };
   const spec = defaultRfq(1, [dealerParty], overrides);
-  spec.mandate = { riskOfficer, maxAmount: securityUnits };
+  spec.mandate = { riskOfficer, maxAmount: Number(securityUnits) };
 
   console.log(`[buyer] RFQ ${spec.reference}: ${securityUnits} ${delivered.id} max@${unitPrice}`);
   const rfqCid = await buyer.createRfq(spec);
@@ -199,7 +201,7 @@ const main = async (): Promise<void> => {
     buyer: buyerParty,
     dealer: dealerParty,
     securitySymbol: delivered.id,
-    quantity: securityUnits,
+    quantity: Number(securityUnits),
     unitPrice: Number(winner.offeredPrice),
     paymentCid: cashCid,
     securityCid: inventoryCid,
