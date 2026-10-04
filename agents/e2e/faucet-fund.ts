@@ -57,7 +57,7 @@ const settlePendingOffers = async (
   role: string,
   instrument: TokenInstrument,
 ): Promise<boolean> => {
-  const offers = await findPendingTransferOffers(client, party);
+  const offers = await findPendingTransferOffers(client, party, instrument);
   for (const offer of offers) {
     const updateId = await acceptTransferOffer(client, instrument, offer, party);
     console.log(`[faucet] ${role} accepted pending offer ${offer.contractId.slice(0, 24)}… (${updateId.slice(0, 12)})`);
@@ -73,8 +73,14 @@ const main = async (): Promise<void> => {
 
   const buyer = requiredEnv("SHADOWDESK_BUYER_PARTY");
   const dealer = requiredEnv("SHADOWDESK_DEALER_A_PARTY");
+  // The dealer holds CBTC so the intended CBTC-for-BETH direction can settle,
+  // and BETH so the settlement machinery itself can be proven end to end even
+  // while CBTC's AllocationFactory package is missing from the DevNet node. Both
+  // legs of a BETH trade are created by the same registry, so it needs no
+  // package the node is missing.
   const targets = [
     { party: dealer, role: "dealerA", token: "cbtc", instrument: CBTC_DEVNET },
+    { party: dealer, role: "dealerA", token: "beth", instrument: BETH_DEVNET },
     { party: buyer, role: "buyer", token: "beth", instrument: BETH_DEVNET },
   ] as const;
 
