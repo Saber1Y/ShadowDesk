@@ -96,12 +96,56 @@ export const interfacesForInstrument = (
 
 const ALLOCATION_TEMPLATE_SUFFIX = ":Utility.Registry.V0.Holding.Allocation:DvpLegAllocation";
 
+/**
+ * Interface references for the registry's allocation choices.
+ *
+ * The registry's concrete allocation template exposes neither
+ * `Allocation_ExecuteTransfer` nor `Allocation_Cancel` directly, so choices are
+ * only reachable through an interface reference. The choice names and arguments
+ * differ per interface: `ExecuteTransfer` lives on the V1 interface and takes no
+ * `actors` field, while `Cancel` lives on the V2 interface and requires the
+ * acting parties in `actors`. Measured against the DevNet registry.
+ */
+const ALLOCATION_INTERFACE_V1 =
+  "#splice-api-token-allocation-v1:Splice.Api.Token.AllocationV1:Allocation";
+const ALLOCATION_CANCEL_CHOICE = "Allocation_Cancel";
+
 export interface Holding {
   contractId: string;
   instrumentId: string;
   admin: string;
   amount: string;
+  /**
+   * True when a pending allocation has reserved this holding.
+   *
+   * A holding reserved by an unsettled allocation looks like any other holding
+   * in the owner's contract set, but the registry refuses to spend it: it is
+   * already committed to that allocation's leg. Passing one to
+   * `AllocationFactory_Allocate` fails the whole trade with "unexpected holding
+   * lock state", so these must be filtered before a leg is built.
+   */
+  locked: boolean;
+  /** What holds the reservation, for diagnostics. */
+  lockContext?: string;
 }
+
+/**
+ * Describe the lock on a holding, or undefined when it is free to spend.
+ *
+ * A lock names the party allowed to release it and the context that took it.
+ * For an allocation that context carries the allocation id and leg, which is
+ * enough to tell a stuck allocation apart from any other reservation.
+ */
+const holdingLock = (view: any): string | undefined => {
+  const lock = view?.lock;
+  if (lock === undefined || lock === null) return undefined;
+  if (typeof lock === "string") return lock === "" ? undefined : lock;
+  // A lock with no lockers and no context reserves nothing.
+  const hasLockers = Array.isArray(lock.lockers?.map) ? lock.lockers.map.length > 0 : Boolean(lock.lockers);
+  const context = lock.context ?? lock.contexts?.[0];
+  if (!hasLockers && !context) return undefined;
+  return context ?? "reserved";
+};
 
 /**
  * Parse a token amount into its integer base units.
@@ -229,7 +273,16 @@ const registryPost = async (registryUrl: string, path: string, body: unknown): P
             : "No SHADOWDESK_CANTON_ACCESS_TOKEN was sent. Use scripts/env/with-devnet-auth.sh to run against DevNet."),
       );
     }
-    const cause = json?.cause ?? json?.details ?? (typeof json === "string" ? json.slice(0, 200) : "");
+    // DevNet reports registry failures under several different keys depending on
+    // which layer rejected the call: `cause` from the ledger, `error` and
+    // `errorDescription` from the registry's own decoder, `details` elsewhere.
+    // Reading only one of them turns an actionable rejection into a bare status.
+    const cause =
+      json?.cause ??
+      json?.errorDescription ??
+      json?.error ??
+      json?.details ??
+      (typeof json === "string" ? json.slice(0, 200) : "");
     throw new CantonError(
       resp.status,
       json,
@@ -263,11 +316,14 @@ export const listHoldings = async (
   const record = (contractId: string, view: any) => {
     if (!instrumentMatches(view, instrument)) return;
     const ref = instrumentRef(view)!;
+    const lockContext = holdingLock(view);
     byContract.set(contractId, {
       contractId,
       instrumentId: ref.id,
       admin: ref.admin,
       amount: view.amount,
+      locked: lockContext !== undefined,
+      ...(lockContext !== undefined ? { lockContext } : {}),
     });
   };
 
@@ -313,8 +369,21 @@ export const requireHoldings = async (
 ): Promise<Holding[]> => {
   const label = `${instrument.id} holding`;
   const holdings = await listHoldings(client, party, instrument, holdingInterface);
-  const usable = holdings.filter((h) => parseTokenAmount(h.amount, instrument.decimals, label) > 0n);
+  // A holding reserved by an unsettled allocation cannot back a new leg, so it is
+  // excluded here rather than failing deep inside the registry.
+  const usable = holdings.filter((h) => parseTokenAmount(h.amount, instrument.decimals, label) > 0n && !h.locked);
   if (usable.length === 0) {
+    const reserved = holdings.filter((h) => h.locked);
+    if (reserved.length > 0) {
+      throw new Error(
+        `${party} holds ${formatTokenAmount(
+          reserved.reduce((sum, h) => sum + parseTokenAmount(h.amount, instrument.decimals, label), 0n),
+          instrument.decimals,
+        )} ${instrument.id}, but all of it is reserved by an unsettled allocation and cannot fund a new leg. ` +
+          reserved.map((h) => `${h.contractId.slice(0, 12)}… (${h.lockContext})`).join("; ") +
+          ". The reservation is released when that allocation settles or is cancelled.",
+      );
+    }
     throw new Error(
       `${party} holds no ${instrument.id} to allocate; searched ${instrument.supportedApis.filter((a) => a.startsWith("splice-api-token-holding-")).join(", ") || "no advertised holding API"}`,
     );
@@ -376,11 +445,23 @@ const allocationBody = (
 export const findPendingTransferOffers = async (
   client: CantonClient,
   receiver: string,
+  instrument?: TokenInstrument,
 ): Promise<Array<{ contractId: string; templateId: string }>> => {
   const offset = await client.ledgerEnd();
   const contracts = await client.queryAllContracts(receiver, offset);
   return contracts
     .filter((contract) => String(contract.templateId).endsWith(":TransferOffer"))
+    .filter((contract) => {
+      if (!instrument) return true;
+      // A party can be owed offers for several instruments at once. Each offer
+      // has to be accepted against its own registry's choice context, so keep
+      // only this instrument's offers. An offer whose instrument cannot be read
+      // is kept rather than dropped, so an unfamiliar shape delays funding
+      // loudly instead of silently skipping it.
+      const view = (contract as any).createArgument;
+      const ref = instrumentRef(view);
+      return ref ? instrumentMatches(view, instrument) : true;
+    })
     .map((contract) => ({ contractId: contract.contractId, templateId: contract.templateId }));
 };
 
@@ -509,11 +590,19 @@ export const createAllocationLeg = async (
     [concreteTemplate, ...disclosed.map((c: any) => c?.templateId)],
     `Creating allocation leg ${request.legId}`,
   );
+
+  // Address the interface, not the concrete template the registry discloses.
+  // Exercising the disclosed `AllocationFactory` template directly fails with
+  // "Invalid template ... or choice:AllocationFactory_Allocate" for the same
+  // reason the transfer offer did: the choice belongs to the interface, and
+  // only the interface resolves by package name. The concrete template stays
+  // as a last resort in case a registry predates the interface.
+  const candidates = [...factoryInterfaces, ...(concreteTemplate ? [concreteTemplate] : [])];
   let lastError: unknown;
-  for (const iface of factoryInterfaces) {
+  for (const templateId of candidates) {
     try {
       tx = await client.exerciseRaw(
-        concreteTemplate ?? iface,
+        templateId,
         factory.factoryId,
         "AllocationFactory_Allocate",
         {
@@ -536,7 +625,7 @@ export const createAllocationLeg = async (
   }
   if (!tx) {
     throw new Error(
-      `allocation leg ${request.legId} could not exercise AllocationFactory_Allocate over ${concreteTemplate ?? factoryInterfaces.join(", ")}: ${describe(lastError)}`,
+      `allocation leg ${request.legId} could not exercise AllocationFactory_Allocate over ${candidates.join(", ")}: ${describe(lastError)}`,
     );
   }
 
@@ -554,6 +643,37 @@ export const createAllocationLeg = async (
   return created.contractId;
 };
 
+/**
+ * Read an allocation contract into the leg shape the callers work with.
+ *
+ * Both the interface view and the raw create argument nest the leg under
+ * `allocation`, so one parser serves either source. The registry's allocation
+ * template is not published under the standard `Allocation` interface on every
+ * participant, which is why a raw scan is a required fallback rather than a
+ * convenience.
+ */
+const parseAllocationLeg = (
+  contractId: string,
+  templateId: string,
+  view: any,
+  registryUrl?: string,
+): AllocationLeg | undefined => {
+  const allocation = view?.allocation;
+  const leg = allocation?.transferLeg;
+  if (!leg?.instrumentId) return undefined;
+  return {
+    contractId,
+    templateId,
+    legId: allocation.transferLegId,
+    instrumentId: leg.instrumentId.id,
+    admin: leg.instrumentId.admin,
+    sender: leg.sender,
+    receiver: leg.receiver,
+    amount: leg.amount,
+    registryUrl,
+  };
+};
+
 /** Both legs of a settlement reference, as seen by a party involved in it. */
 export const listAllocationLegs = async (
   client: CantonClient,
@@ -569,29 +689,34 @@ export const listAllocationLegs = async (
       : [FALLBACK_INTERFACES.allocation];
 
   const legs = new Map<string, AllocationLeg>();
+  const record = (contractId: string, templateId: string, view: any): void => {
+    if (legs.has(contractId)) return;
+    if (view?.allocation?.settlement?.settlementRef?.id !== settlementRef) return;
+    // No per-instrument interface is pinned here: `ExecuteTransfer` and `Cancel`
+    // live on different allocation interfaces, so each command builder picks the
+    // interface its own choice requires.
+    const parsed = parseAllocationLeg(contractId, templateId, view, options.registryUrl);
+    if (parsed) legs.set(contractId, parsed);
+  };
+
   for (const iface of interfaces) {
     const rows = await client.queryByInterface(party, iface, offset, {
       includeCreatedEventBlob: true,
     });
-    for (const row of rows) {
-      if (legs.has(row.contractId)) continue;
-      const view = row.viewValue;
-      const allocation = view?.allocation;
-      if (allocation?.settlement?.settlementRef?.id !== settlementRef) continue;
-      const leg = allocation.transferLeg;
-      legs.set(row.contractId, {
-        contractId: row.contractId,
-        templateId: row.templateId,
-        legId: allocation.transferLegId,
-        instrumentId: leg.instrumentId.id,
-        admin: leg.instrumentId.admin,
-        sender: leg.sender,
-        receiver: leg.receiver,
-        amount: leg.amount,
-        registryUrl: options.registryUrl,
-      });
+    for (const row of rows) record(row.contractId, row.templateId, row.viewValue);
+  }
+
+  // Fall back to a direct scan when the interface query matched nothing, so a
+  // freshly created leg is not reported as missing purely because the node does
+  // not publish it under the expected interface name.
+  if (legs.size === 0) {
+    for (const created of await client.queryAllContracts(party, offset)) {
+      const templateId = String(created.templateId);
+      if (!templateId.endsWith(ALLOCATION_TEMPLATE_SUFFIX)) continue;
+      record(created.contractId, templateId, created.createArgument);
     }
   }
+
   return [...legs.values()];
 };
 
@@ -635,7 +760,10 @@ export const buildAllocationTransferCommands = async (
     }
     commands.push({
       ExerciseCommand: {
-        templateId: leg.templateId,
+        // `Allocation_ExecuteTransfer` lives on the V1 allocation interface, not
+        // on the registry's concrete allocation template, so an interface
+        // reference is required for the choice to resolve at all.
+        templateId: ALLOCATION_INTERFACE_V1,
         contractId: leg.contractId,
         choice: "Allocation_ExecuteTransfer",
         choiceArgument: {
@@ -717,30 +845,37 @@ export const findAllocationLegsByCid = async (
   const searchOnce = async (): Promise<Map<string, AllocationLeg>> => {
     const offset = await client.ledgerEnd();
     const found = new Map<string, AllocationLeg>();
+    const record = (contractId: string, templateId: string, view: any): void => {
+      if (!wanted.has(contractId) || found.has(contractId)) return;
+      const parsed = parseAllocationLeg(contractId, templateId, view, options.registryUrl);
+      if (parsed) found.set(contractId, parsed);
+    };
+
     for (const party of parties) {
       for (const iface of interfaces) {
         const rows = await client.queryByInterface(party, iface, offset, {
           includeCreatedEventBlob: true,
         });
-        for (const row of rows) {
-          if (!wanted.has(row.contractId) || found.has(row.contractId)) continue;
-          const allocation = (row.viewValue as any)?.allocation;
-          const leg = allocation?.transferLeg;
-          if (!leg) continue;
-          found.set(row.contractId, {
-            contractId: row.contractId,
-            templateId: row.templateId,
-            legId: allocation.transferLegId,
-            instrumentId: leg.instrumentId.id,
-            admin: leg.instrumentId.admin,
-            sender: leg.sender,
-            receiver: leg.receiver,
-            amount: leg.amount,
-            registryUrl: options.registryUrl,
-          });
+        for (const row of rows) record(row.contractId, row.templateId, row.viewValue);
+      }
+    }
+
+    // The registry's allocation template is not guaranteed to publish the
+    // standard `Allocation` interface under the name this client expects, and an
+    // interface query that matches nothing is indistinguishable from a leg that
+    // does not exist. Both the dealer and the buyer are parties to the trade,
+    // so both can see the allocation even while it is unsettled, so fall back to
+    // reading the contracts directly rather than reporting a false negative.
+    if (found.size < wanted.size) {
+      for (const party of parties) {
+        for (const created of await client.queryAllContracts(party, offset)) {
+          const templateId = String(created.templateId);
+          if (!templateId.endsWith(ALLOCATION_TEMPLATE_SUFFIX)) continue;
+          record(created.contractId, templateId, created.createArgument);
         }
       }
     }
+
     return found;
   };
 
@@ -784,4 +919,108 @@ export const createDvpLegs = async (
     settleBefore,
   });
   return { securityLegId, paymentLegId, settlementRef: request.settlementRef };
+};
+/**
+ * Abandon an allocation whose settlement never happened, releasing the holdings
+ * it reserved.
+ *
+ * A created allocation locks its input holdings until it settles or is
+ * cancelled. An allocation left behind by a failed run therefore keeps real
+ * balances unusable for the next trade, and the registry rejects those holdings
+ * with "unexpected holding lock state" until the reservation is gone.
+ *
+ * Cancellation is authorised per leg by a set the registry chooses, so the
+ * receiver, the sender and the registry admin are tried in turn and the first
+ * accepted set is used. Both parties are required to sign whichever set the
+ * registry accepts.
+ */
+export const cancelAllocationLeg = async (
+  client: CantonClient,
+  leg: { contractId: string; sender: string; receiver: string; admin?: string },
+  options: { registryUrl: string },
+): Promise<{ updateId: string; actors: string[] }> => {
+  const ctx = await registryPost(
+    options.registryUrl,
+    `/api/token-standard/v0/registrars/${encodeURIComponent(leg.admin ?? "")}/registry/allocations/v1/${leg.contractId}/choice-contexts/cancel`,
+    {},
+  );
+
+  const candidates: string[][] = [
+    [leg.receiver],
+    [leg.sender],
+    [leg.sender, leg.receiver],
+    ...(leg.admin ? [[leg.admin]] : []),
+  ].filter((actors) => actors.length > 0 && actors.every(Boolean));
+
+  let lastError: unknown;
+  for (const actors of candidates) {
+    try {
+      const tx = await client.exerciseRaw(
+        ALLOCATION_INTERFACE_V2,
+        leg.contractId,
+        ALLOCATION_CANCEL_CHOICE,
+        { actors, extraArgs: { context: ctx.choiceContextData, meta: { values: {} } } },
+        actors,
+        { disclosedContracts: ctx.disclosedContracts, packageIdSelectionPreference: null },
+      );
+      return { updateId: tx.transaction?.updateId ?? "", actors };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw new Error(
+    `no party on leg ${leg.contractId.slice(0, 12)}… was allowed to cancel it: ${String(
+      (lastError as any)?.causeJson?.cause ?? (lastError as any)?.message ?? lastError,
+    ).slice(0, 300)}`,
+  );
+};
+
+/**
+ * Cancel every allocation a settlement reference left behind.
+ *
+ * Used to recover after a failed run so the reserved holdings become spendable
+ * again. Returns the legs that were still active, so a caller can report what
+ * was actually released instead of assuming the cleanup ran.
+ */
+export const cancelDanglingAllocations = async (
+  client: CantonClient,
+  parties: string[],
+  settlementRefPrefix: string,
+  options: { registryUrl: string; admin?: string },
+): Promise<{ contractId: string; updateId: string }[]> => {
+  const offset = await client.ledgerEnd();
+  const released: { contractId: string; updateId: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const party of parties) {
+    for (const created of await client.queryAllContracts(party, offset)) {
+      const templateId = String(created.templateId);
+      if (!templateId.endsWith(ALLOCATION_TEMPLATE_SUFFIX)) continue;
+      if (seen.has(created.contractId)) continue;
+      const allocation = (created.createArgument as any)?.allocation;
+      const leg = allocation?.transferLeg;
+      if (!leg) continue;
+      // Scope the sweep to our own runs so a live settlement is never cancelled.
+      const ref = allocation.settlement?.settlementRef?.id ?? allocation.settlement?.id;
+      if (typeof ref !== "string" || !ref.startsWith(settlementRefPrefix)) continue;
+      seen.add(created.contractId);
+      try {
+        const { updateId } = await cancelAllocationLeg(
+          client,
+          {
+            contractId: created.contractId,
+            sender: leg.sender,
+            receiver: leg.receiver,
+            ...(options.admin ? { admin: options.admin } : {}),
+          },
+          options,
+        );
+        released.push({ contractId: created.contractId, updateId });
+      } catch {
+        // A leg the registry will not release is reported by the caller's own
+        // balance check; skipping it keeps the remaining legs recoverable.
+      }
+    }
+  }
+  return released;
 };
