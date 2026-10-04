@@ -10,5 +10,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["shared/**/*.ts", "buyer/**/*.ts", "dealer/**/*.ts", "demo/**/*.ts"]
+  "include": ["shared/**/*.ts", "buyer/**/*.ts", "dealer/**/*.ts", "demo/**/*.ts", "e2e/**/*.ts"]
 }
