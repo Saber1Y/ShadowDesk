@@ -56,18 +56,37 @@ export async function POST(request: Request) {
 
   running = true;
   const agentRoot = process.env.AGENTS_ROOT ?? "/Users/mac/codes/Shadow Desk/agents";
-  const child = spawn("npm", ["run", "demo"], {
-    cwd: agentRoot,
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      ...(cantonAccessToken ? { SHADOWDESK_CANTON_ACCESS_TOKEN: cantonAccessToken } : {}),
-      SHADOWDESK_AMOUNT: String(amount),
-      SHADOWDESK_MAX_PRICE: String(maxPrice),
-      SHADOWDESK_ASSET_TO_BUY: assetToBuy,
-      SHADOWDESK_SETTLEMENT_ASSET: settlementAsset,
-    },
-  });
+
+  // On DevNet the real-token flow is the one that matters: it settles in registry
+  // instruments and writes the receipt in the same update. It reads its own
+  // instrument pair and quantity from the environment rather than the synthetic
+  // symbols the localnet demo takes, so the two are dispatched separately.
+  const realFlow = body.real === true || process.env.SHADOWDESK_NETWORK === "devnet";
+  const spawnPlan: { command: string; args: string[]; cwd: string } = realFlow
+    ? { command: "npm", args: ["run", "e2e:real-flow"], cwd: agentRoot }
+    : { command: "npm", args: ["run", "demo"], cwd: agentRoot };
+
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_ENV: "production",
+    ...(cantonAccessToken ? { SHADOWDESK_CANTON_ACCESS_TOKEN: cantonAccessToken } : {}),
+  };
+
+  if (realFlow) {
+    childEnv.SHADOWDESK_E2E_QUANTITY = String(amount);
+    childEnv.SHADOWDESK_E2E_UNIT_PRICE = String(maxPrice);
+    // The registry legs take their instruments from this pair, defaulting to the
+    // intended product direction: delivering CBTC against BETH.
+    childEnv.SHADOWDESK_REAL_DELIVERED_INSTRUMENT = process.env.SHADOWDESK_REAL_DELIVERED_INSTRUMENT ?? "CBTC";
+    childEnv.SHADOWDESK_REAL_PAYMENT_INSTRUMENT = process.env.SHADOWDESK_REAL_PAYMENT_INSTRUMENT ?? "BETH";
+  } else {
+    childEnv.SHADOWDESK_AMOUNT = String(amount);
+    childEnv.SHADOWDESK_MAX_PRICE = String(maxPrice);
+    childEnv.SHADOWDESK_ASSET_TO_BUY = assetToBuy;
+    childEnv.SHADOWDESK_SETTLEMENT_ASSET = settlementAsset;
+  }
+
+  const child = spawn(spawnPlan.command, spawnPlan.args, { cwd: spawnPlan.cwd, env: childEnv });
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
