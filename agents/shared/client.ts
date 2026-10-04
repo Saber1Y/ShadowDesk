@@ -251,9 +251,14 @@ export class CantonClient {
    * unactionable error into an installable one.
    */
   async requirePackages(templateIds: ReadonlyArray<string | undefined>, label: string): Promise<void> {
+    // Only concrete `packageId:Module:Entity` references can be checked against
+    // a list of package ids. An interface reference is written
+    // `#packageName:Module:Entity` and resolves by *name*, so its first segment
+    // is not a package id and comparing it to the installed set would report
+    // every interface as missing. Those are resolved by the ledger itself.
     const needed = [...new Set(
       templateIds
-        .filter((t): t is string => typeof t === "string" && t.includes(":"))
+        .filter((t): t is string => typeof t === "string" && t.includes(":") && !t.startsWith("#"))
         .map((t) => ({ packageId: t.split(":")[0]!, templateId: t })),
     )];
     if (needed.length === 0) return;

@@ -585,9 +585,15 @@ export const createAllocationLeg = async (
     return cause ? String(cause) : error instanceof Error ? error.message : String(error);
   };
 
-  let tx: Awaited<ReturnType<CantonClient["exerciseRaw"]>> | undefined;
+let tx: Awaited<ReturnType<CantonClient["exerciseRaw"]>> | undefined;
+  // Preflight only what is actually addressed. The concrete factory template
+  // the registry discloses frequently lives in an older package release that
+  // this participant does not list, yet the same choice resolves through the
+  // interface, so gating on the disclosure rejects trades the ledger accepts.
+  // A disclosed contract is resolved when the exercise runs and the ledger
+  // reports it precisely if it cannot be.
   await client.requirePackages(
-    [concreteTemplate, ...disclosed.map((c: any) => c?.templateId)],
+    factoryInterfaces,
     `Creating allocation leg ${request.legId}`,
   );
 
@@ -600,6 +606,11 @@ export const createAllocationLeg = async (
   const candidates = [...factoryInterfaces, ...(concreteTemplate ? [concreteTemplate] : [])];
   let lastError: unknown;
   for (const templateId of candidates) {
+    // The concrete template is the one case that genuinely needs its own package
+    // present, so it is checked on the way in rather than up front.
+    if (templateId === concreteTemplate) {
+      await client.requirePackages([concreteTemplate], `Creating allocation leg ${request.legId}`);
+    }
     try {
       tx = await client.exerciseRaw(
         templateId,
