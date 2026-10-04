@@ -7,6 +7,7 @@ import {
   listHoldings,
   type AllocationLegRequest,
 } from "../shared/token-allocation.js";
+import type { TokenInstrument } from "../shared/config.js";
 
 /**
  * Real Token Standard (CIP-56) delivery-versus-payment check.
@@ -73,15 +74,25 @@ const main = async (): Promise<void> => {
   }
 
   const settlementRef = `SHADOWDESK-DVP-${Date.now()}`;
+  // The pair defaults to the intended product trade, but which instruments can
+  // actually be allocated is a property of each registry: an instrument whose
+  // AllocationFactory package is not installed on the signing participant cannot
+  // be traded at all, so the pair is selectable to exercise an installable one.
+  const securityInstrument = (envValue("SHADOWDESK_DVP_SECURITY_INSTRUMENT") ?? "CBTC").toUpperCase() === "BETH"
+    ? beth
+    : cbtc;
+  const paymentInstrument = (envValue("SHADOWDESK_DVP_PAYMENT_INSTRUMENT") ?? "BETH").toUpperCase() === "BETH"
+    ? beth
+    : cbtc;
   const security: AllocationLegRequest = {
-    instrument: cbtc,
+    instrument: securityInstrument,
     sender: required("SHADOWDESK_DVP_SECURITY_SENDER"),
     receiver: required("SHADOWDESK_DVP_SECURITY_RECIPIENT"),
     amount: required("SHADOWDESK_DVP_SECURITY_AMOUNT"),
     legId: "security",
   };
   const payment: AllocationLegRequest = {
-    instrument: beth,
+    instrument: paymentInstrument,
     sender: required("SHADOWDESK_DVP_PAYMENT_SENDER"),
     receiver: required("SHADOWDESK_DVP_PAYMENT_RECIPIENT"),
     amount: required("SHADOWDESK_DVP_PAYMENT_AMOUNT"),
@@ -89,15 +100,23 @@ const main = async (): Promise<void> => {
   };
   const executor = envValue("SHADOWDESK_DVP_EXECUTOR") ?? parties.buyer;
 
+  const total = async (party: string, instrument: TokenInstrument): Promise<number> =>
+    (await listHoldings(client, party, instrument)).reduce((sum, h) => sum + Number(h.amount), 0);
+
+  // Expected net change per party per instrument. When both legs settle in the
+  // same instrument a party's send and receive cancel out, so the expectation has
+  // to be the net rather than each leg in isolation.
+  const sameInstrument =
+    security.instrument.id === payment.instrument.id &&
+    security.instrument.issuer === payment.instrument.issuer;
+  const securityAmount = Number(security.amount);
+  const paymentAmount = Number(payment.amount);
+
   const before = {
-    securitySender: (await listHoldings(client, security.sender, security.instrument)).reduce(
-      (sum, h) => sum + Number(h.amount),
-      0,
-    ),
-    paymentSender: (await listHoldings(client, payment.sender, payment.instrument)).reduce(
-      (sum, h) => sum + Number(h.amount),
-      0,
-    ),
+    securitySender: await total(security.sender, security.instrument),
+    securityReceiver: await total(security.receiver, security.instrument),
+    paymentSender: await total(payment.sender, payment.instrument),
+    paymentReceiver: await total(payment.receiver, payment.instrument),
   };
 
   const legs = await createDvpLegs(client, { executor, settlementRef, security, payment });
@@ -106,10 +125,12 @@ const main = async (): Promise<void> => {
   console.log(`[dvp]   payment  ${partyLabel(payment.sender)} -> ${partyLabel(payment.receiver)} ${payment.amount} ${payment.instrument.id} cid=${legs.paymentLegId.slice(0, 24)}...`);
 
   const listed = await listAllocationLegs(client, security.sender, settlementRef, {
-    registryUrl: cbtc.registryUrl,
+    registryUrl: security.instrument.registryUrl,
+    instrument: security.instrument,
   });
   const paymentListed = await listAllocationLegs(client, payment.sender, settlementRef, {
-    registryUrl: beth.registryUrl,
+    registryUrl: payment.instrument.registryUrl,
+    instrument: payment.instrument,
   });
   if (listed.length === 0 || paymentListed.length === 0) {
     throw new Error(
@@ -118,25 +139,65 @@ const main = async (): Promise<void> => {
   }
   console.log(`[dvp] interface query sees ${listed.length + paymentListed.length} legs before execution`);
 
-  const result = await executeAllocationsAtomically(client, [...listed, ...paymentListed], { executor });
+  // Both parties can observe both allocations, so the two listings overlap and
+  // must be de-duplicated: executing the same contract twice in one update fails
+  // with CONTRACT_NOT_ACTIVE once the first execution consumes it.
+  const allLegs = new Map<string, (typeof listed)[number]>();
+  for (const leg of [...listed, ...paymentListed]) allLegs.set(leg.contractId, leg);
+  const result = await executeAllocationsAtomically(client, [...allLegs.values()], { executor });
   console.log(`[dvp] both legs executed in one transaction (${result.eventCount} events)`);
 
-  const afterSecuritySender = (await listHoldings(client, security.sender, security.instrument)).reduce(
-    (sum, h) => sum + Number(h.amount),
-    0,
-  );
-  const afterPaymentSender = (await listHoldings(client, payment.sender, payment.instrument)).reduce(
-    (sum, h) => sum + Number(h.amount),
-    0,
-  );
-  const dropped = before.securitySender - afterSecuritySender === Number(security.amount)
-    && before.paymentSender - afterPaymentSender === Number(payment.amount);
-  if (!dropped) {
+  const after = {
+    securitySender: await total(security.sender, security.instrument),
+    securityReceiver: await total(security.receiver, security.instrument),
+    paymentSender: await total(payment.sender, payment.instrument),
+    paymentReceiver: await total(payment.receiver, payment.instrument),
+  };
+
+  // Expected change per party and instrument, accumulated from both legs. Deriving
+  // it generically matters: in a same-instrument trade each party is typically the
+  // sender of one leg and the receiver of the other, so the two amounts combine
+  // into a net rather than appearing as separate movements.
+  type Key = string;
+  const keyOf = (party: string, instrument: TokenInstrument): Key => `${party}|${instrument.id}`;
+  const expectedDeltas = new Map<Key, number>();
+  const addDelta = (party: string, instrument: TokenInstrument, value: number): void => {
+    const key = keyOf(party, instrument);
+    expectedDeltas.set(key, (expectedDeltas.get(key) ?? 0) + value);
+  };
+  addDelta(security.sender, security.instrument, -securityAmount);
+  addDelta(security.receiver, security.instrument, securityAmount);
+  addDelta(payment.sender, payment.instrument, -paymentAmount);
+  addDelta(payment.receiver, payment.instrument, paymentAmount);
+
+  const observed = new Map<Key, number>();
+  const observe = (party: string, instrument: TokenInstrument, was: number, now: number): void => {
+    observed.set(keyOf(party, instrument), now - was);
+  };
+  observe(security.sender, security.instrument, before.securitySender, after.securitySender);
+  observe(security.receiver, security.instrument, before.securityReceiver, after.securityReceiver);
+  observe(payment.sender, payment.instrument, before.paymentSender, after.paymentSender);
+  observe(payment.receiver, payment.instrument, before.paymentReceiver, after.paymentReceiver);
+
+  // Holdings are summed from decimal strings, so the comparison is made with a
+  // tolerance well below the instruments' smallest unit rather than for exact
+  // float equality.
+  const tolerance = 1e-9;
+  const wrong = [...expectedDeltas.entries()].filter(([key, want]) => {
+    const got = observed.get(key) ?? 0;
+    return Math.abs(got - want) > tolerance;
+  });
+  if (wrong.length > 0) {
     throw new Error(
-      `holdings did not move by the allocated amounts: security ${before.securitySender} -> ${afterSecuritySender}, payment ${before.paymentSender} -> ${afterPaymentSender}`,
+      `holdings did not move as the two legs require: ${wrong
+        .map(([key, want]) => {
+          const [party, instrument] = key.split("|");
+          return `${partyLabel(party)} ${instrument} moved ${(observed.get(key) ?? 0).toFixed(10)}, expected ${want.toFixed(10)}`;
+        })
+        .join("; ")}`,
     );
   }
-  console.log(`[dvp] holdings moved by both leg amounts`);
+  console.log(`[dvp] holdings moved exactly as both legs require${sameInstrument ? " (net, single instrument)" : ""}`);
 
   await printHoldings(client);
   console.log(`DVP REAL ALLOCATION OK ref=${settlementRef}`);
