@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { CantonClient, findCreatedByTemplate } from "./client.js";
 import type { TokenInstrument } from "./config.js";
 import {
+  ALLOCATION_RESOLVE_TIMEOUT_MS,
   buildAllocationTransferCommands,
   findAllocationLegsByCid,
   type AllocationLeg,
@@ -211,7 +212,9 @@ export const settleV2 = async (
     client,
     [request.buyer, request.dealer, request.executor],
     refs.map((ref) => ref.allocationCid),
-    { registryUrl: request.registryUrl },
+    // The allocations were written moments ago, so allow the ledger to make them
+    // visible rather than failing a settlement on propagation timing.
+    { registryUrl: request.registryUrl, waitTimeoutMs: ALLOCATION_RESOLVE_TIMEOUT_MS },
   );
 
   const legs: AllocationLeg[] = [];
@@ -226,7 +229,7 @@ export const settleV2 = async (
     legs.push(allocation);
   }
 
-  const { commands, disclosedContracts, actAs } = await buildAllocationTransferCommands(legs, {
+  const { commands, disclosedContracts, actAs } = await buildAllocationTransferCommands(client, legs, {
     executor: request.executor,
   });
 
