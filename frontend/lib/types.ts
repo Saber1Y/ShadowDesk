@@ -23,6 +23,35 @@ export interface MandateView {
   at: string;
 }
 
+/**
+ * A registry holding, as the ledger actually holds it.
+ *
+ * `locked` matters as much as the amount: a holding reserved by an unsettled
+ * allocation cannot be spent, so reporting the balance alone would overstate
+ * what a party can trade.
+ */
+export interface RealHoldingView {
+  holder: string;
+  role: string;
+  instrument: string;
+  amount: string;
+  locked: boolean;
+  lockContext: string | null;
+  cid: string;
+}
+
+/** One leg of a registry allocation, the unit that actually moves tokens. */
+export interface RealLegView {
+  settlementRef: string;
+  legId: string;
+  instrument: string;
+  sender: string;
+  receiver: string;
+  amount: string;
+  cid: string;
+  at: string;
+}
+
 export interface DashboardState {
   updatedAt: string;
   participants: { name: string; jsonApi: string; reachable: boolean; ledgerEnd: number | null }[];
@@ -40,6 +69,8 @@ export interface DashboardState {
     deals: { reference: string; security: string; quantity: string; unitPrice: string; cid: string; at: string }[];
     receipts: { reference: string; security: string; quantity: string; unitPrice: string; totalValue: string; settledAt: string; mandateRef: string | null; cid: string }[];
     mandates: MandateView[];
+    realHoldings: RealHoldingView[];
+    realLegs: RealLegView[];
   };
   privacy: {
     checked: boolean;

@@ -25,6 +25,41 @@ export interface PublicProjection {
   counts: { rfqs: number; proposals: number; sealed: number; deals: number; receipts: number; assets: number };
 }
 
+/**
+ * A registry holding, as the ledger actually holds it.
+ *
+ * `locked` matters as much as the amount: a holding reserved by an unsettled
+ * allocation is not spendable, and the registry rejects it, so reporting the
+ * raw balance alone would overstate what a party can trade.
+ */
+export interface RealHoldingView {
+  holder: string;
+  role: string;
+  instrument: string;
+  amount: string;
+  locked: boolean;
+  lockContext: string | null;
+  cid: string;
+}
+
+/**
+ * One leg of a registry allocation, the unit that actually moves tokens.
+ *
+ * A settled trade is two of these committed in a single update alongside the
+ * ShadowDesk receipt, so the legs are what tie the on-chain workflow to real
+ * balances rather than the workflow's own asset contracts.
+ */
+export interface RealLegView {
+  settlementRef: string;
+  legId: string;
+  instrument: string;
+  sender: string;
+  receiver: string;
+  amount: string;
+  cid: string;
+  at: string;
+}
+
 export interface InstitutionalProjection {
   buyerParty: string | null;
   assets: any[];
@@ -34,6 +69,8 @@ export interface InstitutionalProjection {
   deals: any[];
   receipts: any[];
   mandates: any[];
+  realHoldings: RealHoldingView[];
+  realLegs: RealLegView[];
 }
 
 export interface DashboardState {
@@ -95,7 +132,10 @@ export const loadDashboardState = async (): Promise<DashboardState> => {
   }
 
   const empty: DashboardState["public"] = { events: [], counts: { rfqs: 0, proposals: 0, sealed: 0, deals: 0, receipts: 0, assets: 0 } };
-  const emptyInst: DashboardState["institutional"] = { buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [], mandates: [] };
+  const emptyInst: DashboardState["institutional"] = {
+    buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [],
+    mandates: [], realHoldings: [], realLegs: [],
+  };
 
   if (!parties.buyer) {
     return {
@@ -111,8 +151,26 @@ export const loadDashboardState = async (): Promise<DashboardState> => {
   const p1Contracts = await P1.queryActiveContracts(parties.buyer, await P1.ledgerEnd());
   const records = p1Contracts.sort((a, b) => a.offset - b.offset);
 
+  // Real registry state is read per party because a holding belongs to its owner
+  // and a party only sees its counterparty's holdings as an observer. A failure
+  // here must not blank the ShadowDesk projection, which comes from `records`.
+  const byParty: Array<[string, RawCreated[]]> = [["buyer", records]];
+  for (const [role, party] of [
+    ["dealerA", parties.dealerA],
+    ["dealerB", parties.dealerB],
+  ] as const) {
+    if (!party) continue;
+    try {
+      const client = role === "dealerB" ? P2 : P1;
+      if (!(await client.ping())) continue;
+      byParty.push([role, await client.queryActiveContracts(party, await client.ledgerEnd())]);
+    } catch {
+      // Keep the buyer view even if a counterparty's node cannot be read.
+    }
+  }
+
   const publicProj = projectPublic(records);
-  const instProj = projectInstitutional(parties.buyer, records);
+  const instProj = projectInstitutional(parties.buyer, records, byParty);
 
   const privacy = await checkPrivacy(parties, records);
 
@@ -194,7 +252,11 @@ const projectPublic = (records: RawCreated[]): PublicProjection => {
   return { events: events.reverse(), counts };
 };
 
-const projectInstitutional = (buyerParty: string, records: RawCreated[]): InstitutionalProjection => {
+const projectInstitutional = (
+  buyerParty: string,
+  records: RawCreated[],
+  byParty: Array<[string, RawCreated[]]>,
+): InstitutionalProjection => {
   const byCid = new Map<string, RawCreated>(records.map((r) => [r.contractId, r]));
   const assets: any[] = [];
   const rfqs: any[] = [];
@@ -298,7 +360,86 @@ const projectInstitutional = (buyerParty: string, records: RawCreated[]): Instit
     }
   }
   void buyerParty;
-  return { buyerParty, assets, rfqs, proposals, sealedQuotes, deals, receipts, mandates };
+  return {
+    buyerParty,
+    assets,
+    rfqs,
+    proposals,
+    sealedQuotes,
+    deals,
+    receipts,
+    mandates,
+    realHoldings: projectRealHoldings(byParty),
+    realLegs: projectRealLegs(records),
+  };
+};
+
+/**
+ * Registry holdings, read from each party's own active contract set.
+ *
+ * A holding is keyed by its owner rather than assumed from the querying party,
+ * because one ACS read returns every contract that party merely observes, which
+ * includes the counterparty's holdings. Ownership is what decides whose balance
+ * it is.
+ */
+const projectRealHoldings = (byParty: Array<[string, RawCreated[]]>): RealHoldingView[] => {
+  const out: RealHoldingView[] = [];
+  for (const [role, records] of byParty) {
+    for (const r of records) {
+      const last = r.templateId.split(":").pop();
+      if (last !== "Holding") continue;
+      const a = r.createArgument;
+      const holder = a.owner as string | undefined;
+      const instrument = a.instrument?.id as string | undefined;
+      if (!holder || !instrument) continue;
+      // `lock` is absent on a free holding and carries { lockers, context } when a
+      // pending allocation has reserved it.
+      const lock = a.lock;
+      const hasLock =
+        lock !== undefined &&
+        lock !== null &&
+        (Boolean(lock.context) || (Array.isArray(lock.lockers?.map) ? lock.lockers.map.length > 0 : Boolean(lock.lockers)));
+      out.push({
+        holder,
+        role,
+        instrument,
+        amount: String(a.amount ?? "0"),
+        locked: hasLock,
+        lockContext: hasLock ? String(lock.context ?? "reserved") : null,
+        cid: shortCid(r.contractId),
+      });
+    }
+  }
+  return out.sort((a, b) => a.role.localeCompare(b.role) || a.instrument.localeCompare(b.instrument));
+};
+
+/**
+ * Registry allocation legs, which are the units that actually move tokens.
+ *
+ * Read from the active contract set because the allocation interfaces are not
+ * published on every participant: a query by interface returns nothing here even
+ * for allocations a direct scan finds immediately.
+ */
+const projectRealLegs = (records: RawCreated[]): RealLegView[] => {
+  const out: RealLegView[] = [];
+  for (const r of records) {
+    const last = r.templateId.split(":").pop();
+    if (last !== "DvpLegAllocation") continue;
+    const allocation = r.createArgument?.allocation;
+    const leg = allocation?.transferLeg;
+    if (!leg?.instrumentId) continue;
+    out.push({
+      settlementRef: String(allocation.settlement?.settlementRef?.id ?? ""),
+      legId: String(allocation.transferLegId ?? ""),
+      instrument: String(leg.instrumentId.id ?? ""),
+      sender: String(leg.sender ?? ""),
+      receiver: String(leg.receiver ?? ""),
+      amount: String(leg.amount ?? "0"),
+      cid: shortCid(r.contractId),
+      at: r.createdAt,
+    });
+  }
+  return out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
 };
 
 const checkPrivacy = async (
