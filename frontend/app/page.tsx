@@ -21,7 +21,10 @@ const DEFAULT_STATE: DashboardState = {
   ],
   parties: { buyer: null, dealerA: null, dealerB: null },
   public: { events: [], counts: { rfqs: 0, proposals: 0, sealed: 0, deals: 0, receipts: 0, assets: 0 } },
-  institutional: { buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [], mandates: [] },
+  institutional: {
+    buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [], mandates: [],
+    realHoldings: [], realLegs: [],
+  },
   privacy: { checked: false, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null },
 };
 
