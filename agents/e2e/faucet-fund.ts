@@ -18,7 +18,7 @@ import {
   settlementEnvironment,
   type TokenInstrument,
 } from "../shared/config.js";
-import { listHoldings } from "../shared/token-allocation.js";
+import { listHoldings, parseTokenAmount, findPendingTransferOffers, acceptTransferOffer } from "../shared/token-allocation.js";
 import { getFaucetToken, requestFaucetTransfer } from "../shared/faucet.js";
 
 const FAUCET_API_URL =
@@ -39,7 +39,30 @@ const heldBaseUnits = async (
   instrument: TokenInstrument,
 ): Promise<bigint> => {
   const holdings = await listHoldings(client, party, instrument);
-  return holdings.reduce((sum, holding) => sum + BigInt(holding.amount.replace(/\.\d+$/, "")), 0n);
+  return holdings.reduce(
+    (sum, holding) =>
+      sum + parseTokenAmount(holding.amount, instrument.decimals, `${instrument.id} holding`),
+    0n,
+  );
+};
+
+/**
+ * The faucet only *offers* a transfer: the recipient has to accept it before the
+ * balance moves. Re-offering when an offer is already pending would mint a second
+ * holding, so any pending offer is accepted first and the party is then funded.
+ */
+const settlePendingOffers = async (
+  client: CantonClient,
+  party: string,
+  role: string,
+  instrument: TokenInstrument,
+): Promise<boolean> => {
+  const offers = await findPendingTransferOffers(client, party);
+  for (const offer of offers) {
+    const updateId = await acceptTransferOffer(client, instrument, offer, party);
+    console.log(`[faucet] ${role} accepted pending offer ${offer.contractId.slice(0, 24)}… (${updateId.slice(0, 12)})`);
+  }
+  return offers.length > 0;
 };
 
 const main = async (): Promise<void> => {
@@ -65,6 +88,10 @@ const main = async (): Promise<void> => {
       );
     }
 
+    if (await settlePendingOffers(client, target.party, target.role, target.instrument)) {
+      continue;
+    }
+
     const held = await heldBaseUnits(client, target.party, target.instrument);
     const scale = 10n ** BigInt(target.instrument.decimals);
     const heldDecimal = Number(held) / Number(scale);
@@ -86,6 +113,7 @@ const main = async (): Promise<void> => {
       amount,
     });
     console.log(`[faucet] ${target.role} <- ${amount} ${target.token.toUpperCase()}: ${result.message ?? "accepted"}`);
+    await settlePendingOffers(client, target.party, target.role, target.instrument);
   }
 
   console.log("[faucet] done; re-read holdings to confirm the transfers settled");

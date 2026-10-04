@@ -3,7 +3,9 @@ import { settlementEnvironment } from "../shared/config.js";
 import {
   createDvpLegs,
   findAllocationLegsByCid,
+  formatTokenAmount,
   listHoldings,
+  parseTokenAmount,
   type AllocationLeg,
 } from "../shared/token-allocation.js";
 import { PACKAGE_ID_V2, TPL_V2, type Party } from "../shared/types.js";
@@ -49,12 +51,8 @@ const parties = {
   dealer: required("SHADOWDESK_DEALER_A_PARTY"),
 };
 
-const toBigInt = (value: string, label: string): bigint => {
-  if (!/^-?\d+$/.test(value.trim())) {
-    throw new Error(`${label} is not an integer token amount: ${JSON.stringify(value)}`);
-  }
-  return BigInt(value.trim());
-};
+const toBigInt = (value: string, decimals: number, label: string): bigint =>
+  parseTokenAmount(value, decimals, label);
 
 const available = async (
   client: CantonClient,
@@ -63,7 +61,10 @@ const available = async (
 ): Promise<bigint> => {
   const instrument = instrumentId === env.cbtc.id ? env.cbtc : env.beth;
   const holdings = await listHoldings(client, party, instrument);
-  return holdings.reduce((sum, h) => sum + toBigInt(h.amount, `${instrumentId} holding`), 0n);
+  return holdings.reduce(
+    (sum, h) => sum + toBigInt(h.amount, instrument.decimals, `${instrumentId} holding`),
+    0n,
+  );
 };
 
 /** Format a 1e18-scaled price as a fixed-point decimal the ledger accepts. */
@@ -80,8 +81,13 @@ const main = async (): Promise<void> => {
   const suffix = String(now);
   const expiry = new Date(now + 24 * 3600 * 1000).toISOString();
 
-  const security = env.cbtc;
-  const payment = env.beth;
+  // Which instrument the dealer delivers. The settlement is symmetric in both
+  // legs, so this only selects which holding each side spends. It defaults to
+  // the product's intended CBTC-for-BETH direction and can be flipped when
+  // DevNet balances only fund the opposite side.
+  const delivered = (envValue("SHADOWDESK_E2E_DELIVERED_INSTRUMENT") ?? env.cbtc.id).toUpperCase();
+  const security = delivered === env.beth.id ? env.beth : env.cbtc;
+  const payment = security === env.cbtc ? env.beth : env.cbtc;
   console.log(`[dv2] trading ${security.id} for ${payment.id} (${payment.decimals} decimals)`);
 
   const dealerSecurity = await available(client, parties.dealer, security.id);
@@ -116,9 +122,14 @@ const main = async (): Promise<void> => {
 
   const securityAmount = quantity;
   const paymentAmount = paymentFor(quantity);
+  // Registry and ShadowDesk contracts both take fixed-point decimals, and the
+  // SettlementPlan asserts leg.amount == quantity, so every amount crossing the
+  // wire is rendered from the same base-unit arithmetic.
+  const securityDecimal = formatTokenAmount(securityAmount, security.decimals);
+  const paymentDecimal = formatTokenAmount(paymentAmount, payment.decimals);
   const unitPrice = formatPrice(unitPriceScaled);
   const reference = `SHADOWDESK-DVP-V2-${suffix}`;
-  console.log(`[dv2] quantity=${securityAmount} ${security.id} at ${unitPrice} ${payment.id}`);
+  console.log(`[dv2] quantity=${securityDecimal} ${security.id} at ${unitPrice} ${payment.id}`);
 
   // 1. Create the two registry allocations.
   const legs = await createDvpLegs(client, {
@@ -128,14 +139,14 @@ const main = async (): Promise<void> => {
       instrument: security,
       sender: parties.dealer,
       receiver: parties.buyer,
-      amount: securityAmount.toString(),
+      amount: securityDecimal,
       legId: "security",
     },
     payment: {
       instrument: payment,
       sender: parties.buyer,
       receiver: parties.dealer,
-      amount: paymentAmount.toString(),
+      amount: paymentDecimal,
       legId: "payment",
     },
   });
@@ -173,7 +184,7 @@ const main = async (): Promise<void> => {
               approvedDealers: [parties.dealer],
               securityInstrument: { id: security.id, admin: security.issuer },
               settlementInstrument: { id: payment.id, admin: payment.issuer },
-              maxAmount: securityAmount.toString(),
+              maxAmount: securityDecimal,
               maxPrice: unitPrice,
               reference: `MANDATE-DV2-${suffix}`,
               expiry,
@@ -208,7 +219,7 @@ const main = async (): Promise<void> => {
             choice: "OpenRfq",
             choiceArgument: {
               dealers: [parties.dealer],
-              amount: securityAmount.toString(),
+              amount: securityDecimal,
               maxPrice: unitPrice,
               reference: `RFQ-DV2-${suffix}`,
               expiry,
@@ -271,17 +282,21 @@ const main = async (): Promise<void> => {
     sealedQuote: sealedCid,
     securityInstrument: security,
     settlementInstrument: payment,
-    quantity: securityAmount.toString(),
+    quantity: securityDecimal,
     unitPrice,
-    securityLeg: toLegRef(securityLeg, "SecurityLeg", securityAmount.toString()),
-    paymentLeg: toLegRef(paymentLeg, "PaymentLeg", paymentAmount.toString()),
+    securityLeg: toLegRef(securityLeg, "SecurityLeg", securityDecimal),
+    paymentLeg: toLegRef(paymentLeg, "PaymentLeg", paymentDecimal),
     expiry,
   });
   console.log(`[dv2] plan ${planCid.slice(0, 20)}... pins both allocations`);
 
   // 5. Settle: registry transfers and the receipt in one transaction.
+  // Sender debits and receiver credits are both read, because a leg that moved
+  // the right amount in the wrong direction would satisfy a debit-only check.
   const beforeDealerSecurity = await available(client, parties.dealer, security.id);
   const beforeBuyerPayment = await available(client, parties.buyer, payment.id);
+  const beforeBuyerSecurity = await available(client, parties.buyer, security.id);
+  const beforeDealerPayment = await available(client, parties.dealer, payment.id);
 
   const result = await settleV2(client, {
     buyer: parties.buyer,
@@ -297,17 +312,52 @@ const main = async (): Promise<void> => {
   // 6. The evidence: both holdings moved, in the same transaction as the receipt.
   const afterDealerSecurity = await available(client, parties.dealer, security.id);
   const afterBuyerPayment = await available(client, parties.buyer, payment.id);
-  if (beforeDealerSecurity - afterDealerSecurity !== securityAmount) {
-    throw new Error(
-      `dealer ${security.id} moved by ${beforeDealerSecurity - afterDealerSecurity}, expected ${securityAmount}`,
-    );
+  const afterBuyerSecurity = await available(client, parties.buyer, security.id);
+  const afterDealerPayment = await available(client, parties.dealer, payment.id);
+
+  const moved: Array<[string, bigint, bigint, "debit" | "credit", bigint]> = [
+    [
+      `dealer ${security.id}`,
+      beforeDealerSecurity,
+      afterDealerSecurity,
+      "debit",
+      securityAmount,
+    ],
+    [
+      `buyer ${payment.id}`,
+      beforeBuyerPayment,
+      afterBuyerPayment,
+      "debit",
+      paymentAmount,
+    ],
+    [
+      `buyer ${security.id}`,
+      beforeBuyerSecurity,
+      afterBuyerSecurity,
+      "credit",
+      securityAmount,
+    ],
+    [
+      `dealer ${payment.id}`,
+      beforeDealerPayment,
+      afterDealerPayment,
+      "credit",
+      paymentAmount,
+    ],
+  ];
+  for (const [label, before, after, kind, expected] of moved) {
+    const delta = kind === "debit" ? before - after : after - before;
+    if (delta !== expected) {
+      throw new Error(
+        `${label} ${kind} was ${delta} base units, expected ${expected} ` +
+          `(balance ${before} -> ${after})`,
+      );
+    }
   }
-  if (beforeBuyerPayment - afterBuyerPayment !== paymentAmount) {
-    throw new Error(
-      `buyer ${payment.id} moved by ${beforeBuyerPayment - afterBuyerPayment}, expected ${paymentAmount}`,
-    );
-  }
-  console.log(`[dv2] holdings moved: dealer -${securityAmount} ${security.id}, buyer -${paymentAmount} ${payment.id}`);
+  console.log(
+    `[dv2] holdings moved: dealer -${securityDecimal} ${security.id}, buyer -${paymentDecimal} ${payment.id}, ` +
+      `buyer +${securityDecimal} ${security.id}, dealer +${paymentDecimal} ${payment.id}`,
+  );
 
   const receipt = await findReceiptV2(client, parties.buyer, reference);
   if (!receipt) throw new Error("buyer cannot read the receipt the settlement created");
