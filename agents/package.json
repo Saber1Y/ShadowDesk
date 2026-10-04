@@ -5,13 +5,15 @@
   "type": "module",
   "scripts": {
     "demo": "tsx demo/demo.ts",
+    "demo:real": "tsx demo/demo-real.ts",
     "typecheck": "tsc --noEmit",
     "e2e:award-chain": "tsx e2e/award-chain-check.ts",
     "e2e:real-dvp": "tsx e2e/real-dvp.ts",
     "e2e:real-dvp-v2": "tsx e2e/real-dvp-v2.ts",
     "faucet:fund": "tsx e2e/faucet-fund.ts",
     "e2e:atomic-submit": "tsx e2e/atomic-submit-check.ts",
-    "e2e:v2-settlement": "tsx e2e/v2-settlement-check.ts"
+    "e2e:v2-settlement": "tsx e2e/v2-settlement-check.ts",
+    "e2e:real-flow": "tsx e2e/real-flow-check.ts"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
