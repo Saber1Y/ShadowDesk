@@ -106,7 +106,7 @@ export class CantonClient {
     commands: unknown[],
     actAs: string[],
     options: { disclosedContracts?: unknown[]; packageIdSelectionPreference?: string[] | null } = {},
-    commandId = randomUUID(),
+    commandId: string = randomUUID(),
   ): Promise<TransactionResponse> {
     const j = await this.submit(
       {
@@ -132,7 +132,7 @@ export class CantonClient {
     choiceArgument: Record<string, unknown>,
     actAs: string[],
     options: { disclosedContracts?: unknown[]; packageIdSelectionPreference?: string[] | null } = {},
-    commandId = randomUUID(),
+    commandId: string = randomUUID(),
   ): Promise<TransactionResponse> {
     return this.submitMany(
       [{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }],
