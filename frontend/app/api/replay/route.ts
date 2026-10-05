@@ -8,6 +8,9 @@ export const maxDuration = 120;
 let running = false;
 const ASSET_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
+/** Registry instruments the DevNet profile knows how to settle. */
+const REGISTRY_INSTRUMENTS = new Set(["CBTC", "BETH"]);
+
 const DEVNET_PARTY_VARIABLES = [
   "SHADOWDESK_BUYER_PARTY",
   "SHADOWDESK_RISK_OFFICER_PARTY",
@@ -44,6 +47,10 @@ export async function POST(request: Request) {
   const maxPrice = Number(body.maxPrice ?? 101);
   const assetToBuy = String(body.assetToBuy ?? "cTBILL");
   const settlementAsset = String(body.settlementAsset ?? "cUSDC");
+  // Only meaningful for the DevNet real-token flow; ignored by the localnet demo,
+  // which settles ShadowDesk's own synthetic symbols.
+  const realDelivered = String(body.realDelivered ?? "").toUpperCase();
+  const realPayment = String(body.realPayment ?? "").toUpperCase();
   if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(maxPrice) || maxPrice <= 0) {
     return Response.json({ ok: false, reason: "Enter positive values for amount and maximum price." }, { status: 400 });
   }
@@ -75,10 +82,21 @@ export async function POST(request: Request) {
   if (realFlow) {
     childEnv.SHADOWDESK_E2E_QUANTITY = String(amount);
     childEnv.SHADOWDESK_E2E_UNIT_PRICE = String(maxPrice);
-    // The registry legs take their instruments from this pair, defaulting to the
-    // intended product direction: delivering CBTC against BETH.
-    childEnv.SHADOWDESK_REAL_DELIVERED_INSTRUMENT = process.env.SHADOWDESK_REAL_DELIVERED_INSTRUMENT ?? "CBTC";
-    childEnv.SHADOWDESK_REAL_PAYMENT_INSTRUMENT = process.env.SHADOWDESK_REAL_PAYMENT_INSTRUMENT ?? "BETH";
+    // The registry legs take their instruments from this pair. It comes from the
+    // request when the operator chose one, so the pair is a decision rather than a
+    // deployment default, and falls back to the intended product direction:
+    // delivering CBTC against BETH.
+    const delivered = REGISTRY_INSTRUMENTS.has(realDelivered) ? realDelivered : "CBTC";
+    const paid = REGISTRY_INSTRUMENTS.has(realPayment) ? realPayment : "BETH";
+    if (delivered === paid) {
+      return Response.json(
+        { ok: false, reason: "The delivered and settlement instruments must be different." },
+        { status: 400 },
+      );
+    }
+    childEnv.SHADOWDESK_REAL_DELIVERED_INSTRUMENT = delivered;
+    childEnv.SHADOWDESK_REAL_PAYMENT_INSTRUMENT = paid;
+    childEnv.SHADOWDESK_E2E_INSTRUMENTS = `${delivered},${paid}`;
   } else {
     childEnv.SHADOWDESK_AMOUNT = String(amount);
     childEnv.SHADOWDESK_MAX_PRICE = String(maxPrice);

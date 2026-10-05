@@ -42,6 +42,10 @@ export default function Page() {
   const [maxPrice, setMaxPrice] = useState("101");
   const [assetToBuy, setAssetToBuy] = useState("cTBILL");
   const [settlementAsset, setSettlementAsset] = useState("cUSDC");
+  // The registry pair actually settled on DevNet, chosen in the UI rather than
+  // taken from a deployment default.
+  const [realDelivered, setRealDelivered] = useState("CBTC");
+  const [realPayment, setRealPayment] = useState("BETH");
   const abortRef = useRef<AbortController | null>(null);
 
   const refreshAuth = useCallback(async () => {
@@ -116,6 +120,12 @@ export default function Page() {
       setLines(["ROUND REJECTED: invalid trade details"]);
       return;
     }
+    if (auth?.mode === "devnet" && realDelivered === realPayment) {
+      const nextFailure = describeFailure("The delivered and settlement instruments must be different.", "round");
+      setFailure(nextFailure);
+      setLines(["ROUND REJECTED: delivered and settlement instruments must differ"]);
+      return;
+    }
     if (assetToBuy === settlementAsset) {
       const nextFailure = describeFailure("The security and settlement instrument must be different.", "round");
       setFailure(nextFailure);
@@ -133,7 +143,14 @@ export default function Page() {
         method: "POST",
         signal: ab.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: parsedAmount, maxPrice: parsedMaxPrice, assetToBuy, settlementAsset }),
+        body: JSON.stringify({
+          amount: parsedAmount,
+          maxPrice: parsedMaxPrice,
+          assetToBuy,
+          settlementAsset,
+          realDelivered,
+          realPayment,
+        }),
       });
       if (!resp.ok) {
         const j = await resp.json().catch(() => null) as { reason?: string } | null;
@@ -313,12 +330,42 @@ export default function Page() {
                   </div>
                   <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">Synthetic ShadowDesk.Asset · not CIP-56</span>
                 </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <AssetField label="Security" value={assetToBuy} onChange={setAssetToBuy} listId="security-assets" />
-                  <AssetField label="Settlement" value={settlementAsset} onChange={setSettlementAsset} listId="settlement-assets" />
-                  <NumberField label="Amount" value={amount} onChange={setAmount} />
-                  <NumberField label="Maximum price" value={maxPrice} onChange={setMaxPrice} step="0.01" />
-                </div>
+                {auth?.mode === "devnet" && (
+                  <div className="mb-4 rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3">
+                    <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
+                        Registry settlement
+                      </p>
+                      <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
+                        Token Standard CIP-56 · settled on-ledger
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <InstrumentField
+                        label="Delivered"
+                        value={realDelivered}
+                        onChange={setRealDelivered}
+                        exclude={realPayment}
+                      />
+                      <InstrumentField
+                        label="Paid"
+                        value={realPayment}
+                        onChange={setRealPayment}
+                        exclude={realDelivered}
+                      />
+                      <NumberField label="Amount" value={amount} onChange={setAmount} />
+                      <NumberField label="Maximum price" value={maxPrice} onChange={setMaxPrice} step="0.01" />
+                    </div>
+                  </div>
+                )}
+                {auth?.mode !== "devnet" && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <AssetField label="Security" value={assetToBuy} onChange={setAssetToBuy} listId="security-assets" />
+                    <AssetField label="Settlement" value={settlementAsset} onChange={setSettlementAsset} listId="settlement-assets" />
+                    <NumberField label="Amount" value={amount} onChange={setAmount} />
+                    <NumberField label="Maximum price" value={maxPrice} onChange={setMaxPrice} step="0.01" />
+                  </div>
+                )}
                 <EnvelopeReadout
                   envelope={envelope}
                   onMatch={() => {
@@ -450,6 +497,37 @@ function AssetField({
         <option value="cTBILL" />
         <option value="cUSDC" />
       </datalist>
+    </label>
+  );
+}
+
+/** A registry instrument picker. The choice is closed because the profile's instruments are fixed. */
+function InstrumentField({
+  label,
+  value,
+  onChange,
+  exclude,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  exclude?: string;
+}) {
+  const options = ["CBTC", "BETH"].filter((o) => o !== exclude);
+  return (
+    <label className="block">
+      <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-border bg-[#030206]/60 px-3 py-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-primary/60"
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
