@@ -7,6 +7,7 @@ import { settleDeal, registerSettlementIntent } from "../shared/settlement.js";
 import {
   cancelDanglingAllocations,
   formatTokenAmount,
+  parseTokenAmount,
   createDvpLegs,
   listHoldings,
   listAllocationLegs,
@@ -35,6 +36,15 @@ const required = (name: string): string => {
   const value = envValue(name);
   if (!value) throw new Error(`${name} is required`);
   return value;
+};
+
+const partyHint = (party: string): string => {
+  const namespace = party.split("::")[0];
+  const hinted = namespace.replace(
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}-?|^[0-9a-fA-F]{8}-/,
+    "",
+  );
+  return hinted.length > 0 ? hinted : namespace.slice(0, 12);
 };
 
 const num = (name: string, fallback: number): number => {
@@ -315,6 +325,37 @@ const main = async (): Promise<void> => {
     if (released.length > 0) {
       console.log(`[registry] released ${released.length} reservation(s) left by an earlier ${instrument.id} round`);
     }
+  }
+
+  // Two rounds means two payments out of the buyer and one delivery per dealer.
+  // Checking that up front turns a mid-run shortfall into an actionable message
+  // instead of an opaque "holds 0.015 BETH but the leg needs 0.02" after the
+  // first round has already committed.
+  const ROUNDS = 2;
+  const needed: Array<[string, string, bigint]> = [
+    [parties.buyer, payment.id, payUnits * BigInt(ROUNDS)],
+    [parties.dealerA, delivered.id, securityUnits],
+    [parties.dealerB, delivered.id, securityUnits],
+  ];
+  const shortfalls: string[] = [];
+  for (const [party, instrumentId, need] of needed) {
+    const instrument = instrumentId === delivered.id ? delivered : payment;
+    const held = (await listHoldings(ledger, party, instrument))
+      .filter((h) => !h.locked)
+      .reduce((sum, h) => sum + parseTokenAmount(h.amount, instrument.decimals, instrumentId), 0n);
+    if (held < need) {
+      shortfalls.push(
+        `${partyHint(party)} needs ${formatTokenAmount(need, instrument.decimals)} ${instrumentId}, ` +
+          `holds ${formatTokenAmount(held, instrument.decimals)}`,
+      );
+    }
+  }
+  if (shortfalls.length > 0) {
+    throw new Error(
+      `two rounds of ${formatTokenAmount(securityUnits, delivered.decimals)} ${delivered.id} for ` +
+        `${formatTokenAmount(payUnits, payment.decimals)} ${payment.id} need:\n  ${shortfalls.join("\n  ")}\n` +
+        "Run `npm run faucet:fund` to top up, or lower SHADOWDESK_E2E_QUANTITY.",
+    );
   }
 
   const base = {

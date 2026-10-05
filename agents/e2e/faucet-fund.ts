@@ -11,6 +11,7 @@
  *   scripts/env/with-devnet-auth.sh npm run faucet:fund
  */
 
+import { formatTokenAmount } from "../shared/token-allocation.js";
 import { CantonClient } from "../shared/client.js";
 import {
   CBTC_DEVNET,
@@ -25,8 +26,6 @@ const FAUCET_API_URL =
   process.env.SHADOWDESK_FAUCET_API_URL ?? "https://cbtc-faucet.devnet.bitsafe.finance/api";
 
 /** The smallest claim the faucet will make, so topping up stays cheap. */
-const TOP_UP = { cbtc: "0.01", beth: "0.02" } as const;
-
 /**
  * Keep at least this much of each instrument on hand.
  *
@@ -34,8 +33,12 @@ const TOP_UP = { cbtc: "0.01", beth: "0.02" } as const;
  * from zero left the dealer unable to trade a second time and made each demo
  * run a one-shot. A floor tops the balance back up instead, while still refusing
  * to inflate a balance that is already sufficient.
+ *
+ * The BETH floor covers the buyer's payment across a two-round run, and both
+ * dealers need a delivering balance because each is made the awarded
+ * counterparty once.
  */
-const MIN_HOLD = { cbtc: "0.01", beth: "0.02" } as const;
+const MIN_HOLD = { cbtc: "0.01", beth: "0.05" } as const;
 
 /** Parse a registry-native decimal such as "0.01" into base units. */
 const toBaseUnits = (decimal: string, decimals: number): bigint => {
@@ -90,13 +93,17 @@ const main = async (): Promise<void> => {
 
   const buyer = requiredEnv("SHADOWDESK_BUYER_PARTY");
   const dealer = requiredEnv("SHADOWDESK_DEALER_A_PARTY");
+  const dealerB = requiredEnv("SHADOWDESK_DEALER_B_PARTY");
   // The dealer holds CBTC so the intended CBTC-for-BETH direction can settle,
   // and BETH so the settlement machinery itself can be proven end to end even
   // while CBTC's AllocationFactory package is missing from the DevNet node. Both
   // legs of a BETH trade are created by the same registry, so it needs no
   // package the node is missing.
+  // Dealer B is funded too because the end-to-end flow makes each dealer the
+  // awarded counterparty once, so both must be able to deliver.
   const targets = [
     { party: dealer, role: "dealerA", token: "cbtc", instrument: CBTC_DEVNET },
+    { party: dealerB, role: "dealerB", token: "cbtc", instrument: CBTC_DEVNET },
     { party: dealer, role: "dealerA", token: "beth", instrument: BETH_DEVNET },
     { party: buyer, role: "buyer", token: "beth", instrument: BETH_DEVNET },
   ] as const;
@@ -129,7 +136,11 @@ const main = async (): Promise<void> => {
       continue;
     }
 
-    const amount = TOP_UP[target.token as keyof typeof TOP_UP];
+    // Top up by the shortfall rather than a fixed amount, so one pass always
+    // reaches the floor. A fixed amount leaves a balance below the floor when it
+    // started far enough under, which meant the next run failed for want of funds.
+    const deficit = floorUnits - held;
+    const amount = formatTokenAmount(deficit, target.instrument.decimals);
     const result = await requestFaucetTransfer({
       apiUrl: FAUCET_API_URL,
       network: environment.network,
