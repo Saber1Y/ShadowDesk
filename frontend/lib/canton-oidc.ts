@@ -45,11 +45,30 @@ export class OidcError extends Error {
   constructor(
     public readonly code: "provider" | "token" | "userinfo" | "security",
     message: string,
+    /**
+     * The OAuth error code, when the provider supplied one.
+     *
+     * This is what separates "the provider could not be reached" from "this
+     * refresh token is no longer valid". Only the second justifies discarding a
+     * stored session, and treating a transient network failure as a dead session
+     * signs the user out for no reason.
+     */
+    public readonly oauthError?: string,
   ) {
     super(message);
     this.name = "OidcError";
   }
 }
+
+/**
+ * True when the provider definitively rejected the grant.
+ *
+ * `invalid_grant` is the provider saying the refresh token is expired, revoked or
+ * already used, and no retry will change that. Anything else - a timeout, a 5xx,
+ * a rate limit - may succeed on a second attempt.
+ */
+export const isDefinitiveTokenRejection = (e: unknown): boolean =>
+  e instanceof OidcError && e.oauthError === "invalid_grant";
 
 const valueOr = (value: string | undefined, fallback: string): string => value?.trim() || fallback;
 
@@ -136,7 +155,20 @@ const requestTokens = async (config: OidcConfig, body: URLSearchParams): Promise
     throw new OidcError("provider", "The Canton identity provider could not be reached.");
   }
   if (!response.ok) {
-    throw new OidcError("token", `The Canton identity provider rejected the token request (${response.status}).`);
+    // Read the OAuth error code out of the body; the status alone cannot tell a
+    // dead refresh token from a provider having a bad minute.
+    let oauthError: string | undefined;
+    try {
+      const parsed = (await response.json()) as Record<string, unknown>;
+      if (typeof parsed.error === "string") oauthError = parsed.error;
+    } catch {
+      // A non-JSON error body is not itself informative.
+    }
+    throw new OidcError(
+      "token",
+      `The Canton identity provider rejected the token request (${response.status}${oauthError ? ` ${oauthError}` : ""}).`,
+      oauthError,
+    );
   }
   let data: Record<string, unknown>;
   try {

@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   getOidcConfig,
+  isDefinitiveTokenRejection,
   jwtClaims,
   refreshTokens,
   revokeRefreshToken,
@@ -251,9 +252,21 @@ const ensureSessionAccessToken = async (session: StoredSession): Promise<StoredS
         accessTokenExpiresAt: Date.now() + refreshed.expiresIn * 1000,
       };
       return await saveSession(next);
-    } catch {
-      await removeFile(sessionPath(session.id));
-      throw new CantonAuthError("expired", "Your Canton session has expired. Connect the wallet again.");
+    } catch (e) {
+      // Only a definitive rejection retires the session. A timeout or a provider
+      // outage leaves a perfectly valid refresh token behind, and deleting the
+      // file on those turned a momentary network blip into a full sign-out with
+      // no way back except the browser.
+      if (isDefinitiveTokenRejection(e)) {
+        await removeFile(sessionPath(session.id));
+        throw new CantonAuthError("expired", "Your Canton session has expired. Connect the wallet again.");
+      }
+      // Keep the session so a later request can retry, and say what actually went
+      // wrong rather than reporting an expiry that did not happen.
+      throw new CantonAuthError(
+        "configuration",
+        `Could not refresh your Canton session: ${(e as Error).message} Your session is kept; retry in a moment.`,
+      );
     }
   })();
   sessionRefreshInFlight.set(session.id, refresh);
