@@ -59,7 +59,7 @@ export interface DealSpec {
 export const settleDeal = async (
   client: CantonClient,
   spec: DealSpec,
-): Promise<{ dealCid: string; receiptCid: string; receipt: Record<string, unknown> }> => {
+): Promise<{ dealCid: string; receiptCid: string; receipt: Record<string, unknown>; updateId: string }> => {
   const dealTx = await client.create(
     "Deal",
     {
@@ -153,5 +153,8 @@ export const settleDeal = async (
     throw new Error("Receipt does not reference the awarded sealed quote");
   }
 
-  return { dealCid, receiptCid, receipt };
+  // The update id is what ties the receipt to the registry transfers committed
+  // alongside it, and it is the only handle on that shared update once the
+  // allocations have been consumed by their own execution.
+  return { dealCid, receiptCid, receipt, updateId: settleTx.transaction?.updateId ?? "" };
 };
