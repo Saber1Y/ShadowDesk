@@ -19,6 +19,52 @@ export const envValue = (name: string): string | undefined => {
   return value && value.length > 0 ? value : undefined;
 };
 
+/** HTTP 413 from the JSON Ledger API: the query matched more elements than the node allows. */
+const isTooManyElements = (e: unknown): boolean => {
+  const status = (e as any)?.status;
+  const text = String((e as any)?.causeJson?.cause ?? (e as any)?.message ?? e);
+  return status === 413 || /MAXIMUM_LIST_ELEMENTS|number of matching elements/i.test(text);
+};
+
+/**
+ * Replace a wildcard identifier filter with the templates a ShadowDesk party can
+ * actually hold.
+ *
+ * This is the narrowing that makes an unbounded query survivable: the wildcard is
+ * what trips the node limit, and a template-scoped query returns the same
+ * contracts for the callers that want them. Registry holdings and allocations are
+ * included because the real-token paths read those through this same scan.
+ */
+const WILDCARD_TO_TEMPLATES = [
+  "ShadowDesk.Rfq:BlockTradeRFQ",
+  "ShadowDesk.Rfq:QuoteProposal",
+  "ShadowDesk.Rfq:SealedQuote",
+  "ShadowDesk.Rfq:TreasuryMandate",
+  "ShadowDesk.Rfq:ApprovedMandate",
+  "ShadowDesk.Settlement:Deal",
+  "ShadowDesk.Settlement:SettlementReceipt",
+  "ShadowDesk.Asset:Asset",
+  ":Utility.Registry.Holding.V0.Holding:Holding",
+  ":Utility.Registry.V0.Holding.Allocation:DvpLegAllocation",
+];
+
+const narrowWildcardFilters = (body: Record<string, unknown>): Record<string, unknown> | undefined => {
+  const eventFormat = body.eventFormat as any;
+  const filtersByParty = eventFormat?.filtersByParty;
+  if (!filtersByParty) return undefined;
+  const parties = Object.keys(filtersByParty);
+  if (parties.length === 0) return undefined;
+  const rebuilt: Record<string, unknown> = {};
+  for (const party of parties) {
+    rebuilt[party] = {
+      cumulative: WILDCARD_TO_TEMPLATES.map((template) => ({
+        templateFilter: { value: { templateId: template } },
+      })),
+    };
+  }
+  return { ...body, eventFormat: { ...eventFormat, filtersByParty: rebuilt } };
+};
+
 export class CantonClient {
   readonly baseUrl: string;
   readonly participantName: string;
@@ -166,18 +212,15 @@ export class CantonClient {
     // plus `verbose` is the older request shape and is accepted without error
     // while being ignored, which returns contracts with no interface views and
     // makes every interface query look like an empty result.
-    const j = await this.req("/v2/state/active-contracts", {
-      method: "POST",
-      body: JSON.stringify({
-        activeAtOffset,
-        eventFormat: {
-          filtersByParty: { [party]: { cumulative: [interfaceFilter] } },
-          verbose: true,
-        },
-      }),
+    const entries = await this.queryActiveContractsPaged({
+      activeAtOffset,
+      eventFormat: {
+        filtersByParty: { [party]: { cumulative: [interfaceFilter] } },
+        verbose: true,
+      },
     });
     const out: InterfaceCreatedEvent[] = [];
-    for (const entry of Array.isArray(j) ? j : []) {
+    for (const entry of entries) {
       const created = entry?.contractEntry?.JsActiveContract?.createdEvent;
       if (!created) continue;
       for (const view of created.interfaceViews ?? []) {
@@ -194,6 +237,52 @@ export class CantonClient {
   }
 
   /**
+   * Walk `/v2/state/active-contracts` to completion.
+   *
+   * The endpoint caps how many contracts one response carries and answers 413
+   * once a party's active set exceeds it, so an unpaged query works on a fresh
+   * sandbox and fails once the same ledger has been used for a while. Paging is
+   * what makes a query's result depend on the party rather than on how much
+   * history has accumulated.
+   */
+  private async queryActiveContractsPaged(body: Record<string, unknown>): Promise<any[]> {
+    const out: any[] = [];
+    let pageToken: string | undefined;
+    // A page that never advances would otherwise loop forever on a ledger that
+    // keeps returning the same token.
+    const seenTokens = new Set<string>();
+    for (;;) {
+      let j: any;
+      try {
+        j = await this.req("/v2/state/active-contracts", {
+          method: "POST",
+          body: JSON.stringify({ ...body, ...(pageToken ? { pageToken } : {}) }),
+        });
+      } catch (e) {
+        // The node caps how many elements one query may match and answers 413
+        // when the party's whole set exceeds it, checked against the total
+        // rather than the page, so paging cannot rescue the request. Narrowing by
+        // template is the only way through, and the caller knows which templates
+        // it wants. Without that the wildcard scan would simply fail once a
+        // sandbox accumulated enough contracts, which it always eventually does.
+        if (!isTooManyElements(e)) throw e;
+        const narrowed = narrowWildcardFilters(body);
+        if (!narrowed) throw e;
+        body = narrowed;
+        pageToken = undefined;
+        seenTokens.clear();
+        continue;
+      }
+      if (Array.isArray(j)) out.push(...j);
+      const next: string | undefined = j?.pageToken ?? undefined;
+      if (!next || seenTokens.has(next)) break;
+      seenTokens.add(next);
+      pageToken = next;
+    }
+    return out;
+  }
+
+  /**
    * Every active contract visible to a party, unfiltered.
    *
    * Used as a fallback when the ledger does not apply identifier filters: some
@@ -204,15 +293,12 @@ export class CantonClient {
   async queryAllContracts(party: string, activeAtOffset: number): Promise<CreatedEvent[]> {
     const filtersByParty: Record<string, unknown> = {};
     filtersByParty[party] = { cumulative: [{ wildcardFilter: { value: {} } }] };
-    const j = await this.req("/v2/state/active-contracts", {
-      method: "POST",
-      body: JSON.stringify({
-        activeAtOffset,
-        eventFormat: { filtersByParty, verbose: false },
-      }),
+    const entries = await this.queryActiveContractsPaged({
+      activeAtOffset,
+      eventFormat: { filtersByParty, verbose: false },
     });
     const out: CreatedEvent[] = [];
-    for (const entry of Array.isArray(j) ? j : []) {
+    for (const entry of entries) {
       const created = entry?.contractEntry?.JsActiveContract?.createdEvent;
       if (!created) continue;
       out.push({
