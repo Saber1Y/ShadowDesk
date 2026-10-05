@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import { readFileSync, rmSync } from "node:fs";
 import { getCantonAuth } from "@/lib/canton-auth";
 import { loadDashboardState } from "@/lib/state";
+import type { RealSettlementRecord } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -17,6 +19,19 @@ const DEVNET_PARTY_VARIABLES = [
   "SHADOWDESK_DEALER_A_PARTY",
   "SHADOWDESK_DEALER_B_PARTY",
 ];
+
+const RESULT_PATH = "/tmp/shadowdesk-real-settlements.json";
+
+/** What the last real-token run recorded, if it ran in this process's lifetime. */
+const readSettlementRecords = (): RealSettlementRecord[] => {
+  try {
+    const raw = readFileSync(RESULT_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as RealSettlementRecord[]) : [];
+  } catch {
+    return [];
+  }
+};
 
 export async function POST(request: Request) {
   let cantonAccessToken: string | undefined;
@@ -62,6 +77,13 @@ export async function POST(request: Request) {
   }
 
   running = true;
+  // A stale record from an earlier round would otherwise be presented as this
+  // run's settlement evidence.
+  try {
+    rmSync(RESULT_PATH, { force: true });
+  } catch {
+    /* nothing to clear */
+  }
   const agentRoot = process.env.AGENTS_ROOT ?? "/Users/mac/codes/Shadow Desk/agents";
 
   // On DevNet the real-token flow is the one that matters: it settles in registry
@@ -97,6 +119,7 @@ export async function POST(request: Request) {
     childEnv.SHADOWDESK_REAL_DELIVERED_INSTRUMENT = delivered;
     childEnv.SHADOWDESK_REAL_PAYMENT_INSTRUMENT = paid;
     childEnv.SHADOWDESK_E2E_INSTRUMENTS = `${delivered},${paid}`;
+    childEnv.SHADOWDESK_E2E_RESULT_PATH = RESULT_PATH;
   } else {
     childEnv.SHADOWDESK_AMOUNT = String(amount);
     childEnv.SHADOWDESK_MAX_PRICE = String(maxPrice);
@@ -131,7 +154,12 @@ export async function POST(request: Request) {
       const close = async (ok: boolean) => {
         try {
           const state = await loadDashboardState();
-          emit({ snapshot: state });
+          // The registry legs are consumed by their own execution, so the state
+          // projection cannot see them. The run records what the settle actually
+          // returned, which is the real allocation ids and the update id they
+          // committed with.
+          const settlements = readSettlementRecords();
+          emit({ snapshot: { ...state, realSettlements: settlements } });
           emit({ done: ok });
         } catch (err) {
           emit({ snapshotError: (err as Error).message, done: false });

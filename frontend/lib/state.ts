@@ -75,6 +75,8 @@ export interface InstitutionalProjection {
 
 export interface DashboardState {
   updatedAt: string;
+  /** Attached by the replay route after a real-token round; absent otherwise. */
+  realSettlements?: import("@/lib/types").RealSettlementRecord[];
   participants: { name: string; jsonApi: string; reachable: boolean; ledgerEnd: number | null }[];
   parties: { buyer: string | null; dealerA: string | null; dealerB: string | null };
   public: PublicProjection;

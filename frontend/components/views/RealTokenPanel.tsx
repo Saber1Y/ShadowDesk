@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 import { Coins, Lock, RefreshCw } from "lucide-react";
 import { HudPanel, Metric, StatusPill } from "../hud";
 import { partyHint } from "@/lib/format";
-import type { DashboardState, RealHoldingView, RealLegView } from "@/lib/types";
+import type { DashboardState, RealHoldingView, RealLegView, RealSettlementRecord } from "@/lib/types";
 
 /**
  * Real registry balances and the allocation legs that move them.
@@ -49,6 +49,7 @@ const fmt = (n: number): string =>
 export function RealTokenPanel({ state }: { state: DashboardState }) {
   const holdings = state.institutional.realHoldings ?? [];
   const legs = state.institutional.realLegs ?? [];
+  const settled = state.realSettlements ?? [];
   const { buyer, dealerA, dealerB } = state.parties;
 
   const roles: Array<[string, string | null]> = [
@@ -57,7 +58,7 @@ export function RealTokenPanel({ state }: { state: DashboardState }) {
     ["dealerB", dealerB],
   ];
 
-  if (holdings.length === 0) {
+  if (holdings.length === 0 && settled.length === 0) {
     return (
       <HudPanel
         label="Registry balances"
@@ -131,6 +132,24 @@ export function RealTokenPanel({ state }: { state: DashboardState }) {
         })}
       </div>
 
+      {settled.length > 0 && (
+        <div className="mt-5 border-t border-border pt-4">
+          <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            settled registry legs
+          </p>
+          <p className="mb-3 text-[11px] leading-relaxed text-zinc-600">
+            An allocation is consumed by its own execution, so it leaves the active contract set and cannot be read
+            back afterwards. These are the ids and amounts the settle itself returned, together with the update that
+            carried the receipt and both transfers in one transaction.
+          </p>
+          <div className="space-y-3">
+            {settled.map((r) => (
+              <SettledRecord key={r.updateId + r.receiptCid} record={r} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {legs.length > 0 && (
         <div className="mt-5 border-t border-border pt-4">
           <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
@@ -148,6 +167,36 @@ export function RealTokenPanel({ state }: { state: DashboardState }) {
         </div>
       )}
     </HudPanel>
+  );
+}
+
+function SettledRecord({ record }: { record: RealSettlementRecord }) {
+  const fmt = (n: number): string => n.toLocaleString("en-US", { maximumFractionDigits: 10 });
+  return (
+    <div className="rounded-lg border border-border bg-[#030206]/30 px-3 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <span className="truncate font-mono text-[10px] text-muted-foreground">{record.settlementRef}</span>
+        <span className="font-mono text-[10px] text-zinc-600">update {record.updateId.slice(0, 16)}</span>
+      </div>
+      <div className="mt-1.5 space-y-1">
+        {record.legs.map((leg) => (
+          <div key={leg.cid + leg.legId} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5">
+            <div className="flex items-center gap-2 font-mono text-[10.5px]">
+              <span className="uppercase tracking-[0.14em] text-zinc-500">{leg.legId}</span>
+              <span className="text-foreground">
+                {partyHint(leg.sender)} <span className="text-zinc-600">&rarr;</span> {partyHint(leg.receiver)}
+              </span>
+            </div>
+            <span className="font-mono text-[10.5px] font-semibold text-primary">
+              {fmt(Number(leg.amount))} {leg.instrument}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-1.5 font-mono text-[9.5px] text-zinc-600">
+        receipt {record.receiptCid.slice(0, 16)} &middot; {record.delivered} for {record.payment}
+      </p>
+    </div>
   );
 }
 

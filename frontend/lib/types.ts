@@ -40,6 +40,30 @@ export interface RealHoldingView {
   cid: string;
 }
 
+/**
+ * What a real-token settle actually returned.
+ *
+ * Registry allocations are consumed by their own execution, so they leave the
+ * active contract set and cannot be read back. This is captured from the settle
+ * response instead, which is also the only place the update id tying the receipt
+ * to both transfers is available.
+ */
+export interface RealSettlementRecord {
+  settlementRef: string;
+  receiptCid: string;
+  updateId: string;
+  delivered: string;
+  payment: string;
+  legs: Array<{
+    cid: string;
+    legId: string;
+    instrument: string;
+    sender: string;
+    receiver: string;
+    amount: string;
+  }>;
+}
+
 /** One leg of a registry allocation, the unit that actually moves tokens. */
 export interface RealLegView {
   settlementRef: string;
@@ -72,6 +96,8 @@ export interface DashboardState {
     realHoldings: RealHoldingView[];
     realLegs: RealLegView[];
   };
+  /** Present only after a real-token round has run in this server's lifetime. */
+  realSettlements?: RealSettlementRecord[];
   privacy: {
     checked: boolean;
     winnerDealer: string | null;
