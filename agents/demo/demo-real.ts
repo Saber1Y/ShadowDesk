@@ -1,4 +1,5 @@
 import { CantonClient, envValue } from "../shared/client.js";
+import { PACKAGE_ID_V2 } from "../shared/types.js";
 import { settlementEnvironment, type TokenInstrument } from "../shared/config.js";
 import { formatTokenAmount } from "../shared/token-allocation.js";
 import {
@@ -11,23 +12,26 @@ import {
 } from "../shared/real-dvp.js";
 
 /**
- * ShadowDesk on DevNet: a real two-token trade settled atomically on the
- * Canton Token Standard registry.
- *
- * This is the live version of the demo. Nothing is synthetic. The RFQ, quote,
- * settlement plan and receipt are real v2 contracts, and the two legs are real
- * CIP-56 Allocation transfers against genuine registry holdings:
- *
- *   Dealer A --[security allocation]--> Buyer
- *   Buyer    --[payment  allocation]--> Dealer A
+ * ShadowDesk on DevNet, settled through the v2 SettlementPlan.
  *
  * Both transfers and the ShadowDesk receipt land in a single Ledger API
  * transaction, so the buyer can never end up holding the security without the
  * dealer receiving the payment, or the reverse.
  *
- * The trade is sized from holdings the script reads itself, so there is nothing
- * to configure beyond being funded. `demo.ts` stays the localnet V1 demo; this
- * one needs DevNet because the local sandbox has no token registry.
+ * **This path cannot complete on DevNet.** It settles through the v2
+ * `SettlementPlan`, and the v2 package is not installed on the participant and
+ * cannot be uploaded: `POST /v2/packages` returns 403 for this application's
+ * token, which only a participant operator can do. The run therefore fails at
+ * submit with `Package-id 9e41d0b5b46e... not known`.
+ *
+ * It is kept because the v2 receipt is the right end state: it records the
+ * registry `InstrumentId` directly instead of the `AssetId` pair the deployed v1
+ * package is limited to. It becomes usable the moment the package can be
+ * installed, with no code change.
+ *
+ * For a real-token flow that runs on DevNet today, use `npm run e2e:real-flow`.
+ * That settles the same way, in one update carrying the v1 receipt plus both
+ * registry transfers, using only packages already deployed.
  *
  *   scripts/env/with-devnet-auth.sh npm run demo:real
  */
@@ -40,6 +44,38 @@ const required = (name: string): string => {
 
 const short = (party: string): string => `${party.slice(0, 18)}...`;
 
+/**
+ * Refuse to start when the v2 settlement package is absent from the participant.
+ *
+ * The registry half of this flow works fine without it, so the failure would
+ * otherwise surface late, as an opaque `Package-id not known` at submit, after a
+ * full round had already been written.
+ */
+const assertV2PackageInstalled = async (env: ReturnType<typeof settlementEnvironment>): Promise<void> => {
+  const client = new CantonClient(env.participants.participant1.jsonApi, "participant1");
+  let installed: string[] = [];
+  try {
+    const resp = await fetch(`${client.baseUrl}/v2/packages?limit=1000`, {
+      headers: envValue("SHADOWDESK_CANTON_ACCESS_TOKEN")
+        ? { Authorization: `Bearer ${envValue("SHADOWDESK_CANTON_ACCESS_TOKEN")}` }
+        : {},
+    });
+    if (resp.ok) installed = ((await resp.json()) as any).packageIds ?? [];
+  } catch {
+    // An unreadable package list is not proof of absence; let the run proceed and
+    // let the ledger decide.
+    return;
+  }
+  if (installed.length === 0 || installed.includes(PACKAGE_ID_V2)) return;
+  throw new Error(
+    `the v2 settlement package ${PACKAGE_ID_V2.slice(0, 12)}... is not installed on this participant.\n` +
+      "This demo settles through the v2 SettlementPlan, so it cannot complete without it, and this " +
+      "application cannot install it: POST /v2/packages returns 403 for its own token.\n" +
+      "Use `npm run e2e:real-flow` for a real-token DevNet settlement that runs today, or have a " +
+      "participant operator install daml-v2/.daml/dist/shadowdesk-treasury-v2-1.0.0.dar.",
+  );
+};
+
 const main = async (): Promise<void> => {
   const env = settlementEnvironment();
   if (env.network !== "devnet") {
@@ -48,6 +84,11 @@ const main = async (): Promise<void> => {
         "Use npm run demo for the localnet demo, or run this through scripts/env/with-devnet-auth.sh",
     );
   }
+
+  // Fail here rather than after a full round of quoting. The v2 package is
+  // settled through, so without it the run cannot commit, and the ledger would
+  // only report "Package-id not known" once everything else had been written.
+  await assertV2PackageInstalled(env);
 
   const buyer = required("SHADOWDESK_BUYER_PARTY");
   const dealer = required("SHADOWDESK_DEALER_A_PARTY");
