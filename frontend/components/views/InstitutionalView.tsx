@@ -5,6 +5,7 @@ import { BadgeCheck, Check, CircleDot, Landmark, ReceiptText, Send, ShieldCheck,
 import { HudPanel, Metric, StatusPill } from "../hud";
 import { RealTokenPanel } from "./RealTokenPanel";
 import { BestExecutionPanel } from "./BestExecutionPanel";
+import { SettlementHistoryPanel } from "./SettlementHistoryPanel";
 import type { DashboardState, MandateView } from "@/lib/types";
 
 export function InstitutionalView({ state }: { state: DashboardState }) {
@@ -189,6 +190,7 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
       </div>
       <BestExecutionPanel state={state} />
       <RealTokenPanel state={state} />
+      <SettlementHistoryPanel state={state} />
     </div>
   );
 }
