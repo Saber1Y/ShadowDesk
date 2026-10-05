@@ -7,7 +7,26 @@ import type { RealSettlementRecord } from "@/lib/types";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-let running = false;
+/**
+ * Single-round guard, held with a deadline rather than a bare boolean.
+ *
+ * The flag was only cleared in the stream's `finally`, which never runs when the
+ * client disconnects mid-round and takes the child process with it. One abandoned
+ * request then blocked every later round with a 409 until the server restarted.
+ * A deadline bounds how long a round can hold the lock, so an abandoned one
+ * cannot wedge the endpoint permanently.
+ */
+let runningUntil = 0;
+const ROUND_LOCK_MS = 15 * 60 * 1000;
+const isRunning = (): boolean => Date.now() < runningUntil;
+const acquireRound = (): boolean => {
+  if (isRunning()) return false;
+  runningUntil = Date.now() + ROUND_LOCK_MS;
+  return true;
+};
+const releaseRound = (): void => {
+  runningUntil = 0;
+};
 const ASSET_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
 /** Registry instruments the DevNet profile knows how to settle. */
@@ -50,7 +69,7 @@ export async function POST(request: Request) {
     cantonAccessToken = auth.accessToken;
   }
 
-  if (running) {
+  if (!acquireRound()) {
     return new Response(JSON.stringify({ ok: false, reason: "A round is already running." }), {
       status: 409,
       headers: { "Content-Type": "application/json" },
@@ -76,7 +95,7 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, reason: "The security and settlement instrument must be different." }, { status: 400 });
   }
 
-  running = true;
+  acquireRound();
   // A stale record from an earlier round would otherwise be presented as this
   // run's settlement evidence.
   try {
@@ -140,6 +159,41 @@ export async function POST(request: Request) {
         }
       };
 
+      // A settled trade consumes the delivering balance, so a second round from
+      // the same button has nothing to trade. The faucet is a DevNet test faucet
+      // and this is the demo driver rather than a check, so it tops the parties
+      // up first. Its output is streamed rather than swallowed, because minting is
+      // a visible side effect and should not happen behind the operator's back.
+      if (realFlow) {
+        await new Promise<void>((resolve) => {
+          const fund = spawn("npm", ["run", "faucet:fund"], { cwd: agentRoot, env: childEnv });
+          const relay = (chunk: Buffer) => {
+            for (const line of chunk.toString().split("\n")) {
+              if (line.trim()) emit({ line: `[faucet] ${line}` });
+            }
+          };
+          fund.stdout.on("data", relay);
+          fund.stderr.on("data", relay);
+          fund.on("close", () => resolve());
+          fund.on("error", (e) => {
+            emit({ line: `[faucet] could not run: ${e.message}` });
+            resolve();
+          });
+        });
+      }
+
+      // If the browser goes away the round should stop rather than run on
+      // unattended, holding the lock and consuming the DevNet session.
+      const stop = () => {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          /* already gone */
+        }
+        releaseRound();
+      };
+      request.signal.addEventListener("abort", stop, { once: true });
+
       child.stdout.on("data", (chunk: Buffer) => {
         for (const line of chunk.toString().split("\n")) {
           if (line.trim()) emit({ line });
@@ -164,7 +218,7 @@ export async function POST(request: Request) {
         } catch (err) {
           emit({ snapshotError: (err as Error).message, done: false });
         } finally {
-          running = false;
+          releaseRound();
           try {
             controller.close();
           } catch {
