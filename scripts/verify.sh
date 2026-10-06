@@ -46,6 +46,7 @@ skip() {
 # --- static checks: no ledger needed -----------------------------------------
 run "agents typecheck" npm --prefix agents run typecheck
 run "frontend typecheck" npm --prefix frontend run typecheck
+run "frontend projection tests" npm --prefix frontend run test:projection
 run "frontend build" npm --prefix frontend run build
 
 # --- Daml: the contract guards ----------------------------------------------

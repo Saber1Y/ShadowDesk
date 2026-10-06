@@ -6,7 +6,8 @@
     "dev": "NEXT_DIST_DIR=.next-dev next dev -p 3001",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:projection": "node --no-warnings --experimental-strip-types --test test/registry-projection.test.ts"
   },
   "dependencies": {
     "lucide-react": "^0.544.0",

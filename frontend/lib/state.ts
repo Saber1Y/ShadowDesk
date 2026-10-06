@@ -1,5 +1,6 @@
 import { CantonClient, PARTICIPANTS, partyHint, shortCid, templateSuffix } from "@/lib/canton";
 import { getCantonAuth } from "@/lib/canton-auth";
+import { projectRealHoldings, projectRealLegs } from "@/lib/registry-projection";
 
 interface RawCreated {
   offset: number;
@@ -374,74 +375,6 @@ const projectInstitutional = (
     realHoldings: projectRealHoldings(byParty),
     realLegs: projectRealLegs(records),
   };
-};
-
-/**
- * Registry holdings, read from each party's own active contract set.
- *
- * A holding is keyed by its owner rather than assumed from the querying party,
- * because one ACS read returns every contract that party merely observes, which
- * includes the counterparty's holdings. Ownership is what decides whose balance
- * it is.
- */
-const projectRealHoldings = (byParty: Array<[string, RawCreated[]]>): RealHoldingView[] => {
-  const out: RealHoldingView[] = [];
-  for (const [role, records] of byParty) {
-    for (const r of records) {
-      const last = r.templateId.split(":").pop();
-      if (last !== "Holding") continue;
-      const a = r.createArgument;
-      const holder = a.owner as string | undefined;
-      const instrument = a.instrument?.id as string | undefined;
-      if (!holder || !instrument) continue;
-      // `lock` is absent on a free holding and carries { lockers, context } when a
-      // pending allocation has reserved it.
-      const lock = a.lock;
-      const hasLock =
-        lock !== undefined &&
-        lock !== null &&
-        (Boolean(lock.context) || (Array.isArray(lock.lockers?.map) ? lock.lockers.map.length > 0 : Boolean(lock.lockers)));
-      out.push({
-        holder,
-        role,
-        instrument,
-        amount: String(a.amount ?? "0"),
-        locked: hasLock,
-        lockContext: hasLock ? String(lock.context ?? "reserved") : null,
-        cid: shortCid(r.contractId),
-      });
-    }
-  }
-  return out.sort((a, b) => a.role.localeCompare(b.role) || a.instrument.localeCompare(b.instrument));
-};
-
-/**
- * Registry allocation legs, which are the units that actually move tokens.
- *
- * Read from the active contract set because the allocation interfaces are not
- * published on every participant: a query by interface returns nothing here even
- * for allocations a direct scan finds immediately.
- */
-const projectRealLegs = (records: RawCreated[]): RealLegView[] => {
-  const out: RealLegView[] = [];
-  for (const r of records) {
-    const last = r.templateId.split(":").pop();
-    if (last !== "DvpLegAllocation") continue;
-    const allocation = r.createArgument?.allocation;
-    const leg = allocation?.transferLeg;
-    if (!leg?.instrumentId) continue;
-    out.push({
-      settlementRef: String(allocation.settlement?.settlementRef?.id ?? ""),
-      legId: String(allocation.transferLegId ?? ""),
-      instrument: String(leg.instrumentId.id ?? ""),
-      sender: String(leg.sender ?? ""),
-      receiver: String(leg.receiver ?? ""),
-      amount: String(leg.amount ?? "0"),
-      cid: shortCid(r.contractId),
-      at: r.createdAt,
-    });
-  }
-  return out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
 };
 
 const checkPrivacy = async (

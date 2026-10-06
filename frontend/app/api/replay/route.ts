@@ -1,11 +1,16 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { getCantonAuth } from "@/lib/canton-auth";
 import { loadDashboardState } from "@/lib/state";
 import type { RealSettlementRecord } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+// A real DevNet round runs two competitive settlements and the participant ACS
+// queries can take several minutes on a long-lived ledger. The previous 120s
+// ceiling was shorter than a legitimate round and could terminate the request
+// while its child was still working.
+export const maxDuration = 900;
 
 /**
  * Single-round guard, held with a deadline rather than a bare boolean.
@@ -18,6 +23,8 @@ export const maxDuration = 120;
  */
 let runningUntil = 0;
 const ROUND_LOCK_MS = 15 * 60 * 1000;
+const ROUND_COOLDOWN_MS = 15 * 1000;
+let lastRoundStartedAt = 0;
 const isRunning = (): boolean => Date.now() < runningUntil;
 const acquireRound = (): boolean => {
   if (isRunning()) return false;
@@ -26,6 +33,18 @@ const acquireRound = (): boolean => {
 };
 const releaseRound = (): void => {
   runningUntil = 0;
+};
+
+/** Reject browser requests originating from another site before any side effect. */
+const isSameOrigin = (request: Request): boolean => {
+  const origin = request.headers.get("origin");
+  if (!origin) return true; // CLI and same-origin server requests do not need Origin.
+  try {
+    const requestUrl = new URL(request.url);
+    return new URL(origin).origin === requestUrl.origin;
+  } catch {
+    return false;
+  }
 };
 const ASSET_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
@@ -39,12 +58,10 @@ const DEVNET_PARTY_VARIABLES = [
   "SHADOWDESK_DEALER_B_PARTY",
 ];
 
-const RESULT_PATH = "/tmp/shadowdesk-real-settlements.json";
-
 /** What the last real-token run recorded, if it ran in this process's lifetime. */
-const readSettlementRecords = (): RealSettlementRecord[] => {
+const readSettlementRecords = (path: string): RealSettlementRecord[] => {
   try {
-    const raw = readFileSync(RESULT_PATH, "utf8");
+    const raw = readFileSync(path, "utf8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as RealSettlementRecord[]) : [];
   } catch {
@@ -53,6 +70,9 @@ const readSettlementRecords = (): RealSettlementRecord[] => {
 };
 
 export async function POST(request: Request) {
+  if (!isSameOrigin(request)) {
+    return Response.json({ ok: false, reason: "Cross-origin round requests are not allowed." }, { status: 403 });
+  }
   let cantonAccessToken: string | undefined;
   if (process.env.SHADOWDESK_NETWORK === "devnet") {
     const missing = DEVNET_PARTY_VARIABLES.filter((name) => !process.env[name]);
@@ -69,13 +89,6 @@ export async function POST(request: Request) {
     cantonAccessToken = auth.accessToken;
   }
 
-  if (!acquireRound()) {
-    return new Response(JSON.stringify({ ok: false, reason: "A round is already running." }), {
-      status: 409,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const amount = Number(body.amount ?? 1_000_000);
   const maxPrice = Number(body.maxPrice ?? 101);
@@ -85,8 +98,13 @@ export async function POST(request: Request) {
   // which settles ShadowDesk's own synthetic symbols.
   const realDelivered = String(body.realDelivered ?? "").toUpperCase();
   const realPayment = String(body.realPayment ?? "").toUpperCase();
-  if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(maxPrice) || maxPrice <= 0) {
-    return Response.json({ ok: false, reason: "Enter positive values for amount and maximum price." }, { status: 400 });
+  const maxRunAmount = 1_000_000_000_000;
+  const maxRunPrice = 1_000_000;
+  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > maxRunAmount || !Number.isFinite(maxPrice) || maxPrice <= 0 || maxPrice > maxRunPrice) {
+    return Response.json({
+      ok: false,
+      reason: `Amount must be a safe integer from 1 to ${maxRunAmount}, and maximum price must be from 0 to ${maxRunPrice}.`,
+    }, { status: 400 });
   }
   if (!ASSET_SYMBOL.test(assetToBuy) || !ASSET_SYMBOL.test(settlementAsset)) {
     return Response.json({ ok: false, reason: "Use asset symbols with 1-32 letters, numbers, dots, dashes, or underscores." }, { status: 400 });
@@ -95,15 +113,25 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, reason: "The security and settlement instrument must be different." }, { status: 400 });
   }
 
-  acquireRound();
+  if (!acquireRound()) {
+    return new Response(JSON.stringify({ ok: false, reason: "A round is already running." }), {
+      status: 409,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (Date.now() - lastRoundStartedAt < ROUND_COOLDOWN_MS) {
+    releaseRound();
+    return new Response(JSON.stringify({ ok: false, reason: "Wait a few seconds before starting another round." }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": "15" },
+    });
+  }
+  lastRoundStartedAt = Date.now();
+
   // A stale record from an earlier round would otherwise be presented as this
   // run's settlement evidence.
-  try {
-    rmSync(RESULT_PATH, { force: true });
-  } catch {
-    /* nothing to clear */
-  }
   const agentRoot = process.env.AGENTS_ROOT ?? "/Users/mac/codes/Shadow Desk/agents";
+  const resultPath = `/tmp/shadowdesk-real-settlements-${randomUUID()}.json`;
 
   // On DevNet the real-token flow is the one that matters: it settles in registry
   // instruments and writes the receipt in the same update. It reads its own
@@ -138,7 +166,7 @@ export async function POST(request: Request) {
     childEnv.SHADOWDESK_REAL_DELIVERED_INSTRUMENT = delivered;
     childEnv.SHADOWDESK_REAL_PAYMENT_INSTRUMENT = paid;
     childEnv.SHADOWDESK_E2E_INSTRUMENTS = `${delivered},${paid}`;
-    childEnv.SHADOWDESK_E2E_RESULT_PATH = RESULT_PATH;
+    childEnv.SHADOWDESK_E2E_RESULT_PATH = resultPath;
   } else {
     childEnv.SHADOWDESK_AMOUNT = String(amount);
     childEnv.SHADOWDESK_MAX_PRICE = String(maxPrice);
@@ -212,13 +240,14 @@ export async function POST(request: Request) {
           // projection cannot see them. The run records what the settle actually
           // returned, which is the real allocation ids and the update id they
           // committed with.
-          const settlements = readSettlementRecords();
+          const settlements = readSettlementRecords(resultPath);
           emit({ snapshot: { ...state, realSettlements: settlements } });
           emit({ done: ok });
         } catch (err) {
           emit({ snapshotError: (err as Error).message, done: false });
         } finally {
           releaseRound();
+          try { rmSync(resultPath, { force: true }); } catch { /* best effort */ }
           try {
             controller.close();
           } catch {
