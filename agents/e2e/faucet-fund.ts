@@ -140,7 +140,14 @@ const main = async (): Promise<void> => {
     // reaches the floor. A fixed amount leaves a balance below the floor when it
     // started far enough under, which meant the next run failed for want of funds.
     const deficit = floorUnits - held;
-    const amount = formatTokenAmount(deficit, target.instrument.decimals);
+    // The faucet refuses claims below its per-token minimum, so a shortfall that
+    // sits under that minimum has to be rounded up to the smallest claim it will
+    // honour rather than failing the whole funding pass. The balance then ends a
+    // little above the floor, which is the intended one-shot cost of staying
+    // tradable while the account holds a leftover from an earlier round.
+    const minUnits = toBaseUnits(String(spec.min_amount), target.instrument.decimals);
+    const claimUnits = deficit < minUnits ? minUnits : deficit;
+    const amount = formatTokenAmount(claimUnits, target.instrument.decimals);
     const result = await requestFaucetTransfer({
       apiUrl: FAUCET_API_URL,
       network: environment.network,
