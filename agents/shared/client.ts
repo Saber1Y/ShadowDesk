@@ -248,6 +248,12 @@ export class CantonClient {
   private async queryActiveContractsPaged(body: Record<string, unknown>): Promise<any[]> {
     const out: any[] = [];
     let pageToken: string | undefined;
+    // Once a wildcard has been narrowed to templates, a further 413 means the
+    // party's template-scoped set is itself too large (an observer-heavy party
+    // can exceed the cap across all ten templates at once), so retrying the
+    // identical narrowed body would loop forever. Per-template queries keep a
+    // single request inside the node limit.
+    let narrowedOnce = false;
     // A page that never advances would otherwise loop forever on a ledger that
     // keeps returning the same token.
     const seenTokens = new Set<string>();
@@ -266,13 +272,68 @@ export class CantonClient {
         // it wants. Without that the wildcard scan would simply fail once a
         // sandbox accumulated enough contracts, which it always eventually does.
         if (!isTooManyElements(e)) throw e;
+        if (narrowedOnce) {
+          const eventFormat = body.eventFormat as any;
+          const filtersByParty = eventFormat?.filtersByParty;
+          if (!filtersByParty) throw e;
+          const perTemplate: any[] = [];
+          for (const party of Object.keys(filtersByParty)) {
+            for (const template of WILDCARD_TO_TEMPLATES) {
+              const fragment = {
+                ...body,
+                eventFormat: {
+                  ...eventFormat,
+                  filtersByParty: {
+                    [party]: { cumulative: [{ templateFilter: { value: { templateId: template } } }] },
+                  },
+                },
+              };
+              try {
+                perTemplate.push(...(await this.reqActiveContractsPaged(fragment)));
+              } catch (e2) {
+                if (isTooManyElements(e2)) {
+                  throw new Error(
+                    `Party ${party.slice(0, 12)} matches more than the node limit in a single template (${template}); cannot list contracts.`,
+                  );
+                }
+                throw e2;
+              }
+            }
+          }
+          return perTemplate;
+        }
         const narrowed = narrowWildcardFilters(body);
         if (!narrowed) throw e;
         body = narrowed;
         pageToken = undefined;
         seenTokens.clear();
+        narrowedOnce = true;
         continue;
       }
+      if (Array.isArray(j)) out.push(...j);
+      const next: string | undefined = j?.pageToken ?? undefined;
+      if (!next || seenTokens.has(next)) break;
+      seenTokens.add(next);
+      pageToken = next;
+    }
+    return out;
+  }
+
+  /**
+   * Walk one fragment (a party- and template-scoped request) to completion,
+   * following page tokens without any 413-driven narrowing. Used where the
+   * caller cannot trust a wildcard or interface scan to stay under the node's
+   * element cap, so each fragment is expected to fit in a single page.
+   */
+  private async reqActiveContractsPaged(body: Record<string, unknown>): Promise<any[]> {
+    const out: any[] = [];
+    let pageToken: string | undefined;
+    const seenTokens = new Set<string>();
+    for (;;) {
+      const j = await this.req("/v2/state/active-contracts", {
+        method: "POST",
+        body: JSON.stringify({ ...body, ...(pageToken ? { pageToken } : {}) }),
+      });
       if (Array.isArray(j)) out.push(...j);
       const next: string | undefined = j?.pageToken ?? undefined;
       if (!next || seenTokens.has(next)) break;
@@ -427,6 +488,17 @@ export class CantonClient {
     return truncated === hint;
   }
 
+  /**
+   * Active contracts for a party that match the given template suffixes.
+   *
+   * Routes through `queryActiveContractsPaged` rather than a single request:
+   * the endpoint caps how many elements one response carries and answers 413
+   * once a party's active set exceeds it, checked against the total rather than
+   * the page, so the scan must either fit under the cap or be narrowed by
+   * template on the server. The paged walk pages the response where possible
+   * and, when the node still refuses, narrows the wildcard to the money
+   * templates a ShadowDesk party can actually hold.
+   */
   async queryActiveContracts(
     party: Party,
     templateSuffixes: string[],
@@ -442,18 +514,15 @@ export class CantonClient {
         },
       ],
     };
-    const j = await this.req("/v2/state/active-contracts", {
-      method: "POST",
-      body: JSON.stringify({
-        activeAtOffset,
-        eventFormat: {
-          filtersByParty,
-          verbose: false,
-        },
-      }),
+    const entries = await this.queryActiveContractsPaged({
+      activeAtOffset,
+      eventFormat: {
+        filtersByParty,
+        verbose: false,
+      },
     });
     const out: CreatedEvent[] = [];
-    for (const entry of j) {
+    for (const entry of entries) {
       const ce = entry.contractEntry;
       if (!ce || !ce.JsActiveContract || !ce.JsActiveContract.createdEvent) continue;
       const created = ce.JsActiveContract.createdEvent;
