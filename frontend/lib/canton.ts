@@ -99,44 +99,97 @@ export class CantonClient {
     return (j.partyDetails ?? []).map((d: any) => d.party as string);
   }
 
+  /**
+   * Active contracts for a party, walked to completion.
+   *
+   * The endpoint caps how many elements one response carries and answers 413
+   * once a party's active set exceeds it (checked against the total rather than
+   * the page), so a single wildcard request works on a fresh sandbox and fails
+   * once the same ledger has been used for a while. Paging covers the response
+   * cap, and narrowing the wildcard to the money templates a ShadowDesk party
+   * can actually hold is the only way through the node's total match limit.
+   */
   async queryActiveContracts(party: string, offset: number): Promise<CreatedRecord[]> {
-    const filtersByParty: Record<string, any> = {};
-    filtersByParty[party] = {
-      cumulative: [
-        {
-          identifierFilter: {
-            WildcardFilter: { value: {} },
+    const wildcardBody = (): Record<string, any> => ({
+      activeAtOffset: offset,
+      eventFormat: {
+        filtersByParty: {
+          [party]: { cumulative: [{ identifierFilter: { WildcardFilter: { value: {} } } }] },
+        },
+        verbose: false,
+      },
+    });
+
+    const MONEY_TEMPLATES = [
+      "ShadowDesk.Rfq:BlockTradeRFQ",
+      "ShadowDesk.Rfq:QuoteProposal",
+      "ShadowDesk.Rfq:SealedQuote",
+      "ShadowDesk.Rfq:TreasuryMandate",
+      "ShadowDesk.Rfq:ApprovedMandate",
+      "ShadowDesk.Settlement:Deal",
+      "ShadowDesk.Settlement:SettlementReceipt",
+      "ShadowDesk.Asset:Asset",
+      ":Utility.Registry.Holding.V0.Holding:Holding",
+      ":Utility.Registry.V0.Holding.Allocation:DvpLegAllocation",
+    ];
+    const narrowBody = (): Record<string, any> => ({
+      ...wildcardBody(),
+      eventFormat: {
+        ...wildcardBody().eventFormat,
+        filtersByParty: {
+          [party]: {
+            cumulative: MONEY_TEMPLATES.map((templateId) => ({
+              templateFilter: { value: { templateId } },
+            })),
           },
         },
-      ],
-    };
-    const j = await this.req("/v2/state/active-contracts", {
-      method: "POST",
-      body: JSON.stringify({
-        activeAtOffset: offset,
-        eventFormat: {
-          filtersByParty,
-          verbose: false,
-        },
-      }),
+      },
     });
-    const rows = Array.isArray(j) ? j : [];
-    const out: CreatedRecord[] = [];
-    for (const entry of rows) {
+
+    const raw: any[] = [];
+    let body = wildcardBody();
+    let pageToken: string | undefined;
+    const seenTokens = new Set<string>();
+    for (;;) {
+      let rows: any;
+      try {
+        rows = await this.req("/v2/state/active-contracts", {
+          method: "POST",
+          body: JSON.stringify({ ...body, ...(pageToken ? { pageToken } : {}) }),
+        });
+      } catch (e: any) {
+        const status = e?.status;
+        const text = String(e?.causeJson?.cause ?? e?.message ?? e);
+        const tooMany = status === 413 || /MAXIMUM_LIST_ELEMENTS|number of matching elements/i.test(text);
+        if (!tooMany) throw e;
+        body = narrowBody();
+        pageToken = undefined;
+        seenTokens.clear();
+        continue;
+      }
+      if (Array.isArray(rows)) raw.push(...rows);
+      const next: string | undefined = rows?.pageToken ?? undefined;
+      if (!next || seenTokens.has(next)) break;
+      seenTokens.add(next);
+      pageToken = next;
+    }
+
+    const created: CreatedRecord[] = [];
+    for (const entry of raw) {
       const ce = entry?.contractEntry;
       if (!ce || !ce.JsActiveContract || !ce.JsActiveContract.createdEvent) continue;
-      const created = ce.JsActiveContract.createdEvent;
-      out.push({
-        offset: created.offset as number,
-        contractId: created.contractId as string,
-        templateId: created.templateId as string,
-        createdAt: (created.createdAt as string) ?? "",
-        createArgument: (created.createArgument as Record<string, unknown>) ?? {},
-        signatories: (created.signatories ?? []) as string[],
-        observers: (created.observers ?? []) as string[],
+      const c = ce.JsActiveContract.createdEvent;
+      created.push({
+        offset: c.offset as number,
+        contractId: c.contractId as string,
+        templateId: c.templateId as string,
+        createdAt: (c.createdAt as string) ?? "",
+        createArgument: (c.createArgument as Record<string, unknown>) ?? {},
+        signatories: (c.signatories ?? []) as string[],
+        observers: (c.observers ?? []) as string[],
       });
     }
-    return out;
+    return created;
   }
 }
 
