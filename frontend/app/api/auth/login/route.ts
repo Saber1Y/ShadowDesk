@@ -11,8 +11,9 @@ export async function GET(request: NextRequest) {
   }
   try {
     const requestForAuthorization = createAuthorizationRequest(request.nextUrl.searchParams.get("returnTo") ?? "/");
-    await storeAuthorizationRequest(requestForAuthorization);
-    return NextResponse.redirect(buildAuthorizationUrl(getOidcConfig(), requestForAuthorization));
+    const response = NextResponse.redirect(buildAuthorizationUrl(getOidcConfig(), requestForAuthorization));
+    storeAuthorizationRequest(response.cookies, requestForAuthorization);
+    return response;
   } catch {
     return NextResponse.redirect(new URL("/?authError=configuration", request.url));
   }

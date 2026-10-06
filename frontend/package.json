@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:projection": "node --no-warnings --experimental-strip-types --test test/registry-projection.test.ts"
+    "test:projection": "node --no-warnings --experimental-strip-types --test test/registry-projection.test.ts",
+    "test:session": "node --no-warnings --experimental-strip-types --test test/session-cookie.test.ts",
+    "test": "npm run test:projection && npm run test:session"
   },
   "dependencies": {
     "lucide-react": "^0.544.0",

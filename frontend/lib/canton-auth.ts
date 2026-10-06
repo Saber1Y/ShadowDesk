@@ -14,6 +14,13 @@ import {
   type OidcTokenSet,
   type OidcUser,
 } from "@/lib/canton-oidc";
+import {
+  MAX_COOKIE_CHUNKS,
+  SessionCookieError,
+  chunkCookieName,
+  openPayload,
+  sealPayload,
+} from "@/lib/session-cookie";
 
 interface AuthStore {
   refreshToken: string;
@@ -52,14 +59,17 @@ export class CantonAuthError extends Error {
 }
 
 export const CANTON_SESSION_COOKIE = "shadowdesk_canton_session";
+export const CANTON_AUTHZ_COOKIE = "shadowdesk_authz";
 export const CANTON_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
+const SESSION_PURPOSE = "canton-session";
+const AUTHZ_PURPOSE = "canton-authz";
+const AUTHZ_TTL_MS = 10 * 60 * 1000;
+
 const SESSION_DIR = process.env.SHADOWDESK_AUTH_SESSION_DIR || join(homedir(), ".config", "shadowdesk", "sessions");
-const PENDING_DIR = join(SESSION_DIR, "pending");
 const AUTH_STORE_PATH = process.env.SHADOWDESK_AUTH_STORE_PATH || join(homedir(), ".config", "shadowdesk", "hackcanton-auth.json");
 const REFRESH_MARGIN_MS = 60_000;
 const SESSION_TTL_MS = CANTON_SESSION_MAX_AGE_SECONDS * 1000;
-const PENDING_TTL_MS = 10 * 60 * 1000;
 
 interface StoredSession {
   id: string;
@@ -74,6 +84,29 @@ interface StoredSession {
 
 interface StoredAuthorization extends AuthorizationRequest {
   createdAt: number;
+}
+
+/** Minimal read view over a request's cookie jar. */
+export interface CantonCookieSource {
+  get(name: string): { value: string } | undefined;
+}
+
+export interface CantonCookieOptions {
+  httpOnly: boolean;
+  sameSite: "lax";
+  secure: boolean;
+  path: string;
+  maxAge: number;
+}
+
+/** Minimal write view: satisfied by NextResponse.cookies and the next/headers cookie store. */
+export interface CantonCookieSink {
+  set(name: string, value: string, options: CantonCookieOptions): unknown;
+}
+
+interface RequestJars {
+  source: CantonCookieSource;
+  sink: CantonCookieSink;
 }
 
 let environmentAccessToken: string | undefined;
@@ -91,15 +124,14 @@ const cookieIsSecure = (): boolean => {
   return process.env.NODE_ENV === "production";
 };
 
-export const getCantonSessionCookieOptions = (maxAge = CANTON_SESSION_MAX_AGE_SECONDS) => ({
+export const getCantonSessionCookieOptions = (maxAge = CANTON_SESSION_MAX_AGE_SECONDS): CantonCookieOptions => ({
   httpOnly: true,
-  sameSite: "lax" as const,
+  sameSite: "lax",
   secure: cookieIsSecure(),
   path: "/",
   maxAge,
 });
 
-const isSessionId = (value: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const isAuthorizationState = (value: string): boolean => /^[A-Za-z0-9_-]{40,100}$/.test(value);
 
 const ensureDirectory = async (directory: string): Promise<void> => {
@@ -159,30 +191,128 @@ const pruneExpiredFiles = async (directory: string, olderThanMs: number): Promis
   );
 };
 
-const readCookieSessionId = async (): Promise<string | undefined> => {
+const sessionPath = (id: string): string => join(SESSION_DIR, `${id}.json`);
+
+// ---------------------------------------------------------------------------
+// Sealed cookie payloads
+// ---------------------------------------------------------------------------
+
+const readSealedPayload = <T>(source: CantonCookieSource, baseName: string, purpose: string): T | undefined => {
   try {
-    return (await cookies()).get(CANTON_SESSION_COOKIE)?.value;
+    return openPayload<T>(purpose, (index) => source.get(chunkCookieName(baseName, index))?.value);
+  } catch (err) {
+    if (err instanceof SessionCookieError) {
+      throw new CantonAuthError("configuration", `Session storage is not configured correctly: ${err.message}`);
+    }
+    throw err;
+  }
+};
+
+const writeSealedPayload = (
+  sink: CantonCookieSink,
+  baseName: string,
+  purpose: string,
+  payload: unknown,
+  maxAge: number,
+): void => {
+  let chunks: string[];
+  try {
+    chunks = sealPayload(purpose, payload);
+  } catch (err) {
+    if (err instanceof SessionCookieError) {
+      throw new CantonAuthError("configuration", `Session storage is not configured correctly: ${err.message}`);
+    }
+    throw err;
+  }
+  const options = getCantonSessionCookieOptions(maxAge);
+  chunks.forEach((value, index) => sink.set(chunkCookieName(baseName, index), value, options));
+  // A previous, larger payload may have used continuation chunks that this one
+  // does not; leaving them behind would splice stale bytes onto the next read.
+  const expired = getCantonSessionCookieOptions(0);
+  for (let index = chunks.length; index < MAX_COOKIE_CHUNKS; index += 1) {
+    sink.set(chunkCookieName(baseName, index), "", expired);
+  }
+};
+
+const clearSealedPayload = (sink: CantonCookieSink, baseName: string): void => {
+  const expired = getCantonSessionCookieOptions(0);
+  for (let index = 0; index < MAX_COOKIE_CHUNKS; index += 1) {
+    sink.set(chunkCookieName(baseName, index), "", expired);
+  }
+};
+
+/** The browser-facing session cookie. maxAge tracks the session's own expiry. */
+export const writeSessionCookie = (sink: CantonCookieSink, session: StoredSession): void => {
+  const maxAge = Math.max(60, Math.ceil((session.expiresAt - Date.now()) / 1000));
+  writeSealedPayload(sink, CANTON_SESSION_COOKIE, SESSION_PURPOSE, session, maxAge);
+};
+
+export const clearSessionCookies = (sink: CantonCookieSink): void => {
+  clearSealedPayload(sink, CANTON_SESSION_COOKIE);
+};
+
+export const clearAuthorizationCookie = (sink: CantonCookieSink): void => {
+  clearSealedPayload(sink, CANTON_AUTHZ_COOKIE);
+};
+
+const requestJars = async (): Promise<RequestJars | undefined> => {
+  try {
+    const jar = await cookies();
+    return { source: jar, sink: jar };
   } catch {
+    // Outside a request scope there is no browser session to read or write.
     return undefined;
   }
 };
 
-const sessionPath = (id: string): string => join(SESSION_DIR, `${id}.json`);
-const authorizationPath = (state: string): string => join(PENDING_DIR, `${state}.json`);
+// ---------------------------------------------------------------------------
+// Local session mirror
+//
+// The cookie is the source of truth everywhere. On a developer machine the
+// session is additionally mirrored to disk so with-devnet-auth.sh and the
+// agent scripts can reuse the same tokens. Serverless hosts skip the mirror:
+// their filesystem is not shared across invocations.
+// ---------------------------------------------------------------------------
 
-export const storeAuthorizationRequest = async (request: AuthorizationRequest): Promise<void> => {
-  await writeJsonFile(authorizationPath(request.state), { ...request, createdAt: Date.now() });
-  await pruneExpiredFiles(PENDING_DIR, PENDING_TTL_MS);
+const mirrorSessions = (): boolean => !process.env.VERCEL;
+
+const writeSessionMirror = async (session: StoredSession): Promise<void> => {
+  if (!mirrorSessions()) return;
+  await writeJsonFile(sessionPath(session.id), session);
+  await pruneExpiredFiles(SESSION_DIR, SESSION_TTL_MS);
 };
 
-export const consumeAuthorizationRequest = async (state: string): Promise<AuthorizationRequest> => {
+const removeSessionMirror = async (id: string): Promise<void> => {
+  if (!mirrorSessions()) return;
+  await removeFile(sessionPath(id));
+};
+
+// ---------------------------------------------------------------------------
+// Authorization request (login -> callback handoff)
+// ---------------------------------------------------------------------------
+
+export const storeAuthorizationRequest = (sink: CantonCookieSink, request: AuthorizationRequest): void => {
+  writeSealedPayload(
+    sink,
+    CANTON_AUTHZ_COOKIE,
+    AUTHZ_PURPOSE,
+    { ...request, createdAt: Date.now() },
+    Math.ceil(AUTHZ_TTL_MS / 1000),
+  );
+};
+
+export const consumeAuthorizationRequest = (source: CantonCookieSource, state: string): AuthorizationRequest => {
   if (!isAuthorizationState(state)) {
     throw new CantonAuthError("expired", "The Canton login request is no longer valid.");
   }
-  const path = authorizationPath(state);
-  const pending = await readJsonFile<StoredAuthorization>(path);
-  await removeFile(path);
-  if (!pending || !pending.codeVerifier || !pending.nonce || Date.now() - pending.createdAt > PENDING_TTL_MS) {
+  const pending = readSealedPayload<StoredAuthorization>(source, CANTON_AUTHZ_COOKIE, AUTHZ_PURPOSE);
+  if (
+    !pending ||
+    !pending.codeVerifier ||
+    !pending.nonce ||
+    pending.state !== state ||
+    Date.now() - pending.createdAt > AUTHZ_TTL_MS
+  ) {
     throw new CantonAuthError("expired", "The Canton login request has expired. Start the connection again.");
   }
   return {
@@ -193,6 +323,10 @@ export const consumeAuthorizationRequest = async (state: string): Promise<Author
     returnTo: pending.returnTo,
   };
 };
+
+// ---------------------------------------------------------------------------
+// Session lifecycle
+// ---------------------------------------------------------------------------
 
 export const createCantonSession = async (tokens: OidcTokenSet, user: CantonUser): Promise<StoredSession> => {
   const createdAt = Date.now();
@@ -207,35 +341,38 @@ export const createCantonSession = async (tokens: OidcTokenSet, user: CantonUser
     expiresAt: tokens.refreshToken ? createdAt + SESSION_TTL_MS : accessTokenExpiresAt,
     user,
   };
-  await writeJsonFile(sessionPath(session.id), session);
-  await pruneExpiredFiles(SESSION_DIR, SESSION_TTL_MS);
+  await writeSessionMirror(session);
   return session;
 };
 
-const getStoredSession = async (id: string): Promise<StoredSession | undefined> => {
-  if (!isSessionId(id)) return undefined;
-  const path = sessionPath(id);
-  const session = await readJsonFile<StoredSession>(path);
-  if (!session || session.id !== id || typeof session.accessToken !== "string" || !session.user?.sub) {
-    await removeFile(path);
+const validateSession = (session: StoredSession | undefined): StoredSession | undefined => {
+  if (
+    !session ||
+    typeof session.id !== "string" ||
+    session.id.length === 0 ||
+    typeof session.accessToken !== "string" ||
+    !session.user?.sub
+  ) {
     return undefined;
   }
-  if (!Number.isFinite(session.expiresAt) || session.expiresAt <= Date.now()) {
-    await removeFile(path);
-    return undefined;
-  }
+  if (!Number.isFinite(session.expiresAt) || session.expiresAt <= Date.now()) return undefined;
   return session;
 };
 
-const saveSession = async (session: StoredSession): Promise<StoredSession> => {
-  await writeJsonFile(sessionPath(session.id), session);
+const readStoredSession = (source: CantonCookieSource): StoredSession | undefined =>
+  validateSession(readSealedPayload<StoredSession>(source, CANTON_SESSION_COOKIE, SESSION_PURPOSE));
+
+const persistSession = async (sink: CantonCookieSink, session: StoredSession): Promise<StoredSession> => {
+  writeSessionCookie(sink, session);
+  await writeSessionMirror(session);
   return session;
 };
 
-const ensureSessionAccessToken = async (session: StoredSession): Promise<StoredSession> => {
+const ensureSessionAccessToken = async (sink: CantonCookieSink, session: StoredSession): Promise<StoredSession> => {
   if (session.accessTokenExpiresAt > Date.now() + REFRESH_MARGIN_MS) return session;
   if (!session.refreshToken) {
-    await removeFile(sessionPath(session.id));
+    await removeSessionMirror(session.id);
+    clearSessionCookies(sink);
     throw new CantonAuthError("expired", "Your Canton session has expired. Connect the wallet again.");
   }
   const inFlight = sessionRefreshInFlight.get(session.id);
@@ -251,14 +388,18 @@ const ensureSessionAccessToken = async (session: StoredSession): Promise<StoredS
         idToken: refreshed.idToken ?? session.idToken,
         accessTokenExpiresAt: Date.now() + refreshed.expiresIn * 1000,
       };
-      return await saveSession(next);
+      // Persisted once, here: the response that ran the refresh carries the
+      // rotated tokens to the browser. Concurrent requests that awaited this
+      // same promise reuse the result without re-sending the cookie.
+      return await persistSession(sink, next);
     } catch (e) {
       // Only a definitive rejection retires the session. A timeout or a provider
-      // outage leaves a perfectly valid refresh token behind, and deleting the
-      // file on those turned a momentary network blip into a full sign-out with
-      // no way back except the browser.
+      // outage leaves a perfectly valid refresh token behind, and clearing the
+      // session on those turned a momentary network blip into a full sign-out
+      // with no way back except the browser.
       if (isDefinitiveTokenRejection(e)) {
-        await removeFile(sessionPath(session.id));
+        await removeSessionMirror(session.id);
+        clearSessionCookies(sink);
         throw new CantonAuthError("expired", "Your Canton session has expired. Connect the wallet again.");
       }
       // Keep the session so a later request can retry, and say what actually went
@@ -276,6 +417,10 @@ const ensureSessionAccessToken = async (session: StoredSession): Promise<StoredS
     sessionRefreshInFlight.delete(session.id);
   }
 };
+
+// ---------------------------------------------------------------------------
+// Environment (service) auth, used when no browser session exists
+// ---------------------------------------------------------------------------
 
 const persistEnvironmentRefreshToken = async (nextToken: string): Promise<void> => {
   await writeJsonFile(AUTH_STORE_PATH, { refreshToken: nextToken } satisfies AuthStore);
@@ -354,13 +499,18 @@ const getEnvironmentAuth = async (): Promise<CantonAuth> => {
   };
 };
 
+// ---------------------------------------------------------------------------
+// Public auth surface
+// ---------------------------------------------------------------------------
+
 export const getCantonAuth = async (): Promise<CantonAuth> => {
   if (!isDevnet()) return { authenticated: false, source: "localnet" };
-  const sessionId = await readCookieSessionId();
-  if (sessionId) {
-    const stored = await getStoredSession(sessionId);
+  const jars = await requestJars();
+  const hasSessionCookie = jars?.source.get(CANTON_SESSION_COOKIE) !== undefined;
+  if (jars && hasSessionCookie) {
+    const stored = readStoredSession(jars.source);
     if (!stored) throw new CantonAuthError("expired", "Your Canton session has expired. Connect the wallet again.");
-    const current = await ensureSessionAccessToken(stored);
+    const current = await ensureSessionAccessToken(jars.sink, stored);
     return {
       accessToken: current.accessToken,
       ledgerUserId: process.env.SHADOWDESK_LEDGER_USER_ID || current.user.sub,
@@ -374,10 +524,10 @@ export const getCantonAuth = async (): Promise<CantonAuth> => {
 
 export const getCantonAuthStatus = async (): Promise<CantonAuthStatus> => {
   if (!isDevnet()) return { mode: "localnet", authenticated: false, user: null };
-  const sessionId = await readCookieSessionId();
-  if (sessionId) {
-    const stored = await getStoredSession(sessionId);
-    if (!stored) return { mode: "devnet", authenticated: false, user: null, reason: "expired" };
+  const jars = await requestJars();
+  const hasSessionCookie = jars?.source.get(CANTON_SESSION_COOKIE) !== undefined;
+  if (jars && hasSessionCookie) {
+    if (!readStoredSession(jars.source)) return { mode: "devnet", authenticated: false, user: null, reason: "expired" };
     try {
       const auth = await getCantonAuth();
       return { mode: "devnet", authenticated: auth.authenticated, user: auth.user ?? null, source: auth.source };
@@ -397,10 +547,9 @@ export const getCantonAuthStatus = async (): Promise<CantonAuthStatus> => {
 };
 
 export const clearCantonSession = async (): Promise<StoredSession | undefined> => {
-  const sessionId = await readCookieSessionId();
-  if (!sessionId || !isSessionId(sessionId)) return undefined;
-  const session = await getStoredSession(sessionId);
-  await removeFile(sessionPath(sessionId));
+  const jars = await requestJars();
+  const session = jars ? readStoredSession(jars.source) : undefined;
+  if (session) await removeSessionMirror(session.id);
   return session;
 };
 
