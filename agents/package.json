@@ -14,7 +14,8 @@
     "e2e:atomic-submit": "tsx e2e/atomic-submit-check.ts",
     "e2e:v2-settlement": "tsx e2e/v2-settlement-check.ts",
     "e2e:real-flow": "tsx e2e/real-flow-check.ts",
-    "e2e:real-guard": "tsx e2e/real-guard-check.ts"
+    "e2e:real-guard": "tsx e2e/real-guard-check.ts",
+    "prune:stale": "tsx e2e/prune-stale.ts"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
