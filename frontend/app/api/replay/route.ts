@@ -6,11 +6,11 @@ import { loadDashboardState } from "@/lib/state";
 import type { RealSettlementRecord } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-// A real DevNet round runs two competitive settlements and the participant ACS
-// queries can take several minutes on a long-lived ledger. The previous 120s
-// ceiling was shorter than a legitimate round and could terminate the request
-// while its child was still working.
-export const maxDuration = 900;
+// Vercel Hobby permits at most 300 seconds. The worker owns the durable job and
+// the route only streams its progress while the request is alive; longer runs
+// must be consumed through the worker's job-status endpoint rather than relying
+// on a serverless request staying open forever.
+export const maxDuration = 300;
 
 /**
  * Single-round guard, held with a deadline rather than a bare boolean.
@@ -67,6 +67,81 @@ const readSettlementRecords = (path: string): RealSettlementRecord[] => {
   } catch {
     return [];
   }
+};
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+const workerRunResponse = (
+  request: Request,
+  workerUrl: string,
+  workerSecret: string,
+  input: Record<string, unknown>,
+): Response => {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emit = (value: unknown) => {
+        try { controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`)); } catch { /* client gone */ }
+      };
+      let lastLine = 0;
+      try {
+        const started = await fetch(`${workerUrl.replace(/\/+$/, "")}/v1/runs`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${workerSecret}`,
+          },
+          body: JSON.stringify(input),
+          cache: "no-store",
+        });
+        const startedBody = await started.json().catch(() => ({}));
+        if (!started.ok) {
+          emit({ line: `WORKER REJECTED: ${startedBody.error ?? started.status}` });
+          emit({ done: false });
+          return;
+        }
+        const runId = startedBody.runId;
+        for (;;) {
+          if (request.signal.aborted) return;
+          const response = await fetch(`${workerUrl.replace(/\/+$/, "")}/v1/runs/${runId}`, {
+            headers: { authorization: `Bearer ${workerSecret}` },
+            cache: "no-store",
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error ?? `worker status ${response.status}`);
+          const run = body.run;
+          for (const line of (run.lines ?? []).slice(lastLine)) emit({ line });
+          lastLine = (run.lines ?? []).length;
+          if (run.status === "completed" || run.status === "failed") {
+            emit({ workerRun: run });
+            try {
+              const state = await loadDashboardState();
+              const records = Array.isArray(run.result) ? run.result : [];
+              emit({ snapshot: { ...state, realSettlements: records } });
+            } catch (error) {
+              emit({ snapshotError: error instanceof Error ? error.message : String(error) });
+            }
+            emit({ done: run.status === "completed" });
+            return;
+          }
+          await sleep(1000);
+        }
+      } catch (error) {
+        emit({ snapshotError: error instanceof Error ? error.message : String(error), done: false });
+      } finally {
+        releaseRound();
+        try { controller.close(); } catch { /* already closed */ }
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 };
 
 export async function POST(request: Request) {
@@ -167,6 +242,17 @@ export async function POST(request: Request) {
     childEnv.SHADOWDESK_REAL_PAYMENT_INSTRUMENT = paid;
     childEnv.SHADOWDESK_E2E_INSTRUMENTS = `${delivered},${paid}`;
     childEnv.SHADOWDESK_E2E_RESULT_PATH = resultPath;
+    const workerUrl = process.env.SHADOWDESK_WORKER_URL;
+    const workerSecret = process.env.SHADOWDESK_WORKER_SECRET;
+    if (workerUrl && workerSecret) {
+      return workerRunResponse(request, workerUrl, workerSecret, {
+        amount,
+        maxPrice,
+        realDelivered: delivered,
+        realPayment: paid,
+        cantonAccessToken,
+      });
+    }
   } else {
     childEnv.SHADOWDESK_AMOUNT = String(amount);
     childEnv.SHADOWDESK_MAX_PRICE = String(maxPrice);

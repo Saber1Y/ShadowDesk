@@ -39,6 +39,53 @@ const restore = async () => {
   }
 };
 
+const runProcess = (args, environment, append) => new Promise((resolve) => {
+  const child = spawn("npm", args, { cwd: agentsRoot, env: environment });
+  child.stdout.on("data", append);
+  child.stderr.on("data", append);
+  child.on("error", (error) => append(`worker child error: ${error.message}`));
+  child.on("close", (code) => resolve(code ?? 1));
+});
+
+const executeRun = async (run, input) => {
+  const resultPath = join(dirname(statePath), `result-${run.id}.json`);
+  const environment = {
+    ...process.env,
+    SHADOWDESK_CANTON_ACCESS_TOKEN: String(input.cantonAccessToken || ""),
+    SHADOWDESK_E2E_QUANTITY: String(input.amount),
+    SHADOWDESK_E2E_UNIT_PRICE: String(input.maxPrice),
+    SHADOWDESK_REAL_DELIVERED_INSTRUMENT: String(input.realDelivered).toUpperCase(),
+    SHADOWDESK_REAL_PAYMENT_INSTRUMENT: String(input.realPayment).toUpperCase(),
+    SHADOWDESK_E2E_RESULT_PATH: resultPath,
+  };
+  const append = (chunk) => {
+    for (const line of String(chunk).split("\n")) {
+      if (line.trim()) run.lines.push(line.slice(0, 2000));
+    }
+    run.lines = run.lines.slice(-500);
+    void persist();
+  };
+  try {
+    await runProcess(["run", "faucet:fund"], environment, append);
+    const code = await runProcess(["run", "e2e:real-flow"], environment, append);
+    run.exitCode = code;
+    run.status = code === 0 ? "completed" : "failed";
+    try {
+      run.result = JSON.parse(await readFile(resultPath, "utf8"));
+    } catch {
+      run.result = undefined;
+    }
+  } catch (error) {
+    append(`worker execution error: ${error instanceof Error ? error.message : String(error)}`);
+    run.exitCode = 1;
+    run.status = "failed";
+  } finally {
+    run.finishedAt = new Date().toISOString();
+    activeRun = null;
+    void persist();
+  }
+};
+
 const parseBody = async (request) => {
   let raw = "";
   for await (const chunk of request) {
@@ -63,35 +110,7 @@ const startRun = (input) => {
   runs.set(id, run);
   activeRun = id;
 
-  const child = spawn("npm", ["run", "e2e:real-flow"], {
-    cwd: agentsRoot,
-    env: {
-      ...process.env,
-      SHADOWDESK_CANTON_ACCESS_TOKEN: String(input.cantonAccessToken || ""),
-      SHADOWDESK_E2E_QUANTITY: String(amount),
-      SHADOWDESK_E2E_UNIT_PRICE: String(price),
-      SHADOWDESK_REAL_DELIVERED_INSTRUMENT: delivered,
-      SHADOWDESK_REAL_PAYMENT_INSTRUMENT: payment,
-    },
-  });
-
-  const append = (chunk) => {
-    for (const line of String(chunk).split("\n")) {
-      if (line.trim()) run.lines.push(line.slice(0, 2000));
-    }
-    run.lines = run.lines.slice(-500);
-    void persist();
-  };
-  child.stdout.on("data", append);
-  child.stderr.on("data", append);
-  child.on("error", (error) => append(`worker child error: ${error.message}`));
-  child.on("close", (code) => {
-    run.exitCode = code;
-    run.status = code === 0 ? "completed" : "failed";
-    run.finishedAt = new Date().toISOString();
-    activeRun = null;
-    void persist();
-  });
+  void executeRun(run, { ...input, amount, maxPrice: price, realDelivered: delivered, realPayment: payment });
   void persist();
   return { run };
 };
