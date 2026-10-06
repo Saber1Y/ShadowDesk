@@ -395,7 +395,18 @@ export default function Page() {
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                 >
-                  {loading ? <LoadingSkeleton /> : tab === "public" ? <PublicView state={state} /> : <InstitutionalView state={state} />}
+                  {loading ? <LoadingSkeleton /> : tab === "public" ? <PublicView state={state} /> : (
+                    <InstitutionalView
+                      state={state}
+                      trade={{
+                        amount,
+                        maxPrice,
+                        delivered: realDelivered,
+                        payment: realPayment,
+                        registry: auth?.mode === "devnet",
+                      }}
+                    />
+                  )}
                 </motion.div>
               </AnimatePresence>
 

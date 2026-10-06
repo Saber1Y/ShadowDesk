@@ -6,9 +6,16 @@ import { HudPanel, Metric, StatusPill } from "../hud";
 import { RealTokenPanel } from "./RealTokenPanel";
 import { BestExecutionPanel } from "./BestExecutionPanel";
 import { SettlementHistoryPanel } from "./SettlementHistoryPanel";
+import { PreTradeFundingPanel } from "./PreTradeFundingPanel";
 import type { DashboardState, MandateView } from "@/lib/types";
 
-export function InstitutionalView({ state }: { state: DashboardState }) {
+export function InstitutionalView({
+  state,
+  trade,
+}: {
+  state: DashboardState;
+  trade?: { amount: string; maxPrice: string; delivered: string; payment: string; registry: boolean };
+}) {
   const { institutional: inst, parties } = state;
   const buyerParty = inst.buyerParty;
   const latestRfq = inst.rfqs[inst.rfqs.length - 1] ?? null;
@@ -26,6 +33,7 @@ export function InstitutionalView({ state }: { state: DashboardState }) {
   return (
     <div className="space-y-5">
       <MandatePanel mandate={mandate} mandateCount={inst.mandates?.length ?? 0} />
+      {trade?.registry && <PreTradeFundingPanel state={state} {...trade} />}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
         <HudPanel
           label="Buyer participant view"
