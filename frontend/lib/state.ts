@@ -279,8 +279,9 @@ const projectInstitutional = (
     if (last !== "TreasuryMandate" && last !== "ApprovedMandate") continue;
     const a = r.createArgument;
     mandateRefByCid.set(r.contractId, a.reference);
+    const expired = Boolean(a.expiry) && new Date(String(a.expiry)).getTime() <= Date.now();
     mandates.push({
-      status: last === "ApprovedMandate" ? "ACTIVE" : "PENDING",
+      status: expired ? "EXPIRED" : last === "ApprovedMandate" ? "ACTIVE" : "PENDING",
       reference: a.reference,
       buyer: partyHint(a.buyer),
       riskOfficer: partyHint(a.riskOfficer),

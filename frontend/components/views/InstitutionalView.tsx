@@ -46,14 +46,14 @@ export function InstitutionalView({
   const buyerCash = inst.assets.filter((a) => a.symbol === "cUSDC").at(-1);
   // Prefer an approved envelope; fall back to one still awaiting its second
   // signature so the panel reports the current authorisation state honestly.
-  const mandate = (inst.mandates ?? []).filter((m) => m.status === "ACTIVE").at(-1)
+  const mandate = (inst.mandates ?? []).filter((m) => m.status === "ACTIVE" && new Date(m.expiry).getTime() > Date.now()).at(-1)
     ?? (inst.mandates ?? []).at(-1)
     ?? null;
 
   return (
     <div className="space-y-5">
       <MandatePanel mandate={mandate} mandateCount={inst.mandates?.length ?? 0} />
-      {tradeRequest.devnet && <PreTradeFundingPanel state={state} amount={tradeRequest.amount} maxPrice={tradeRequest.maxPrice} delivered={tradeRequest.realDelivered} payment={tradeRequest.realPayment} />}
+      {tradeRequest.devnet && <PreTradeFundingPanel state={state} amount={tradeRequest.amount} maxPrice={tradeRequest.maxPrice} delivered={tradeRequest.realDelivered} payment={tradeRequest.realPayment} automaticFunding />}
       <TradeRequestPanel {...tradeRequest} />
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
         <HudPanel

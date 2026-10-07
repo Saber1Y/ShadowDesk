@@ -214,7 +214,7 @@ export default function Page() {
   // the runtime assertion is what stops an out-of-policy trade.
   const mandates = state.institutional.mandates;
   const activeMandate = useMemo(() => {
-    return (mandates ?? []).filter((m) => m.status === "ACTIVE").at(-1) ?? null;
+    return (mandates ?? []).filter((m) => m.status === "ACTIVE" && new Date(m.expiry).getTime() > Date.now()).at(-1) ?? null;
   }, [mandates]);
 
   const envelope = useMemo(() => {

@@ -30,12 +30,14 @@ export function PreTradeFundingPanel({
   maxPrice,
   delivered,
   payment,
+  automaticFunding = false,
 }: {
   state: DashboardState;
   amount: string;
   maxPrice: string;
   delivered: string;
   payment: string;
+  automaticFunding?: boolean;
 }) {
   const holdings = state.institutional.realHoldings ?? [];
   const amountBase = Number(amount);
@@ -64,15 +66,16 @@ export function PreTradeFundingPanel({
       icon={WalletCards}
       badge={
         <StatusPill
-          tone={!hasData ? "muted" : funded ? "ok" : "failed"}
-          label={!hasData ? "NO REGISTRY DATA" : funded ? "FUNDED" : "INSUFFICIENT"}
-          pulse={funded}
+          tone={!hasData ? "muted" : funded ? "ok" : automaticFunding ? "live" : "failed"}
+          label={!hasData ? "NO REGISTRY DATA" : funded ? "FUNDED" : automaticFunding ? "FUNDS ON RUN" : "INSUFFICIENT"}
+          pulse={funded || automaticFunding}
         />
       }
     >
       <p className="mb-5 max-w-[72ch] text-[13px] leading-relaxed text-muted-foreground">
         Checks free Token Standard holdings before the RFQ. Reserved holdings are excluded because they cannot fund a
-        new trade. USD valuation is unavailable until a trusted price source is configured.
+        new trade. On the live DevNet path, the worker funds shortfalls before execution. USD valuation is unavailable
+        until a trusted price source is configured.
       </p>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -106,7 +109,11 @@ export function PreTradeFundingPanel({
 
       {!hasData && <p className="mt-4 text-[11px] text-zinc-500">Connect to DevNet to read real Token Standard holdings.</p>}
       {hasData && !buyerFunded && <p className="mt-4 text-[11px] text-amber-300">Buyer payment balance is below the required amount.</p>}
-      {hasData && buyerFunded && !dealersFunded && <p className="mt-4 text-[11px] text-amber-300">At least one invited dealer cannot deliver the requested amount.</p>}
+      {hasData && buyerFunded && !dealersFunded && (
+        <p className="mt-4 text-[11px] text-amber-300">
+          At least one invited dealer is short before funding. The live worker tops up the required balance when the round starts.
+        </p>
+      )}
     </HudPanel>
   );
 }

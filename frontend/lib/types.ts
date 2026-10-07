@@ -8,7 +8,7 @@ export interface PublicEventView {
 }
 
 export interface MandateView {
-  status: "ACTIVE" | "PENDING";
+  status: "ACTIVE" | "PENDING" | "EXPIRED";
   reference: string;
   buyer: string;
   riskOfficer: string;
