@@ -8,6 +8,8 @@ An institutional treasury needs to rebalance without giving an execution agent u
 
 [Open the deployed ShadowDesk dashboard](https://shadowdesk-inky.vercel.app)
 
+The Vercel project deploys the Next.js application from `frontend/`.
+
 ## What is proven
 
 - **Quote secrecy.** Competing dealers never see each other's prices. Each `QuoteProposal` is signatory to one dealer and observed only by the buyer; a losing dealer on another participant sees **zero** of the winner's quotes on the shared synchronizer.
