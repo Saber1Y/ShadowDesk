@@ -7,14 +7,34 @@ import { RealTokenPanel } from "./RealTokenPanel";
 import { BestExecutionPanel } from "./BestExecutionPanel";
 import { SettlementHistoryPanel } from "./SettlementHistoryPanel";
 import { PreTradeFundingPanel } from "./PreTradeFundingPanel";
+import { TradeRequestPanel } from "./TradeRequestPanel";
 import type { DashboardState, MandateView } from "@/lib/types";
 
 export function InstitutionalView({
   state,
-  trade,
+  tradeRequest,
 }: {
   state: DashboardState;
-  trade?: { amount: string; maxPrice: string; delivered: string; payment: string; registry: boolean };
+  tradeRequest: {
+    devnet: boolean;
+    amount: string;
+    maxPrice: string;
+    assetToBuy: string;
+    settlementAsset: string;
+    realDelivered: string;
+    realPayment: string;
+    envelope: { mandate: MandateView; breaches: string[]; within: boolean } | null;
+    running: boolean;
+    disabled: boolean;
+    onAmountChange: (value: string) => void;
+    onMaxPriceChange: (value: string) => void;
+    onAssetToBuyChange: (value: string) => void;
+    onSettlementAssetChange: (value: string) => void;
+    onRealDeliveredChange: (value: string) => void;
+    onRealPaymentChange: (value: string) => void;
+    onMatchMandate: () => void;
+    onRun: () => void;
+  };
 }) {
   const { institutional: inst, parties } = state;
   const buyerParty = inst.buyerParty;
@@ -33,7 +53,8 @@ export function InstitutionalView({
   return (
     <div className="space-y-5">
       <MandatePanel mandate={mandate} mandateCount={inst.mandates?.length ?? 0} />
-      {trade?.registry && <PreTradeFundingPanel state={state} {...trade} />}
+      {tradeRequest.devnet && <PreTradeFundingPanel state={state} amount={tradeRequest.amount} maxPrice={tradeRequest.maxPrice} delivered={tradeRequest.realDelivered} payment={tradeRequest.realPayment} />}
+      <TradeRequestPanel {...tradeRequest} />
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
         <HudPanel
           label="Buyer participant view"

@@ -4,6 +4,10 @@ A policy-controlled treasury execution layer for institutional rebalancing, buil
 
 An institutional treasury needs to rebalance without giving an execution agent unlimited discretion. ShadowDesk records a buyer mandate approved by the buyer and a risk officer, constrains the allowed dealers, assets, amount, price, and expiry, then opens a private RFQ and settles the approved trade atomically.
 
+## Live demo
+
+[Open the deployed ShadowDesk dashboard](https://shadowdesk-inky.vercel.app)
+
 ## What is proven
 
 - **Quote secrecy.** Competing dealers never see each other's prices. Each `QuoteProposal` is signatory to one dealer and observed only by the buyer; a losing dealer on another participant sees **zero** of the winner's quotes on the shared synchronizer.

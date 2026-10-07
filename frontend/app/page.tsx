@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUpRight, Play, RefreshCw, ShieldCheck, Terminal, TriangleAlert } from "lucide-react";
-import type { AuthStatus, DashboardState, MandateView, StreamLine } from "@/lib/types";
+import { ArrowUpRight, Terminal } from "lucide-react";
+import type { AuthStatus, DashboardState, StreamLine } from "@/lib/types";
 import { PublicView } from "@/components/views/PublicView";
 import { InstitutionalView } from "@/components/views/InstitutionalView";
 import { ShadowDeskMark } from "@/components/shadowdesk-mark";
@@ -282,14 +282,6 @@ export default function Page() {
           <div className="flex items-center gap-2">
             {auth && <WalletAuth status={auth} />}
             <StatusDot ok={allReachable} running={running} />
-            <button
-              onClick={runRound}
-              disabled={running || !allReachable || needsAuth}
-              className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-[0_0_20px_rgba(243,255,151,0.2)] transition-[transform,background-color,opacity] duration-200 ease-out hover:-translate-y-0.5 hover:bg-[#f7ffb5] active:scale-[0.98] disabled:translate-y-0 disabled:scale-100 disabled:opacity-40"
-            >
-              {running ? <RefreshCw className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-              {running ? "Running" : "Run round"}
-            </button>
           </div>
         </header>
 
@@ -322,62 +314,6 @@ export default function Page() {
 
               {failure && <FailureNotice failure={failure} onRetry={retryFailure} />}
 
-              <section className="mb-6 rounded-2xl border border-border bg-card/55 p-4 shadow-xl shadow-black/10 backdrop-blur-xl md:p-5">
-                <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-                  <div>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">Trade request</p>
-                    <p className="mt-1 text-[13px] text-muted-foreground">Choose synthetic asset symbols and trade terms. Symbols do not select registry tokens.</p>
-                  </div>
-                  <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">Synthetic ShadowDesk.Asset · not CIP-56</span>
-                </div>
-                {auth?.mode === "devnet" && (
-                  <div className="mb-4 rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3">
-                    <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
-                        Registry settlement
-                      </p>
-                      <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-                        Token Standard CIP-56 · settled on-ledger
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <InstrumentField
-                        label="Delivered"
-                        value={realDelivered}
-                        onChange={setRealDelivered}
-                        exclude={realPayment}
-                      />
-                      <InstrumentField
-                        label="Paid"
-                        value={realPayment}
-                        onChange={setRealPayment}
-                        exclude={realDelivered}
-                      />
-                      <NumberField label="Amount" value={amount} onChange={setAmount} />
-                      <NumberField label="Maximum price" value={maxPrice} onChange={setMaxPrice} step="0.01" />
-                    </div>
-                  </div>
-                )}
-                {auth?.mode !== "devnet" && (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <AssetField label="Security" value={assetToBuy} onChange={setAssetToBuy} listId="security-assets" />
-                    <AssetField label="Settlement" value={settlementAsset} onChange={setSettlementAsset} listId="settlement-assets" />
-                    <NumberField label="Amount" value={amount} onChange={setAmount} />
-                    <NumberField label="Maximum price" value={maxPrice} onChange={setMaxPrice} step="0.01" />
-                  </div>
-                )}
-                <EnvelopeReadout
-                  envelope={envelope}
-                  onMatch={() => {
-                    if (!activeMandate) return;
-                    setAssetToBuy(activeMandate.assetToBuy);
-                    setSettlementAsset(activeMandate.settlementAsset);
-                    setAmount(String(Number(activeMandate.maxAmount)));
-                    setMaxPrice(Number(activeMandate.maxPrice).toFixed(2));
-                  }}
-                />
-              </section>
-
               <div className="md:hidden mb-5 grid grid-cols-2 gap-2">
                 <TabButton active={tab === "public"} onClick={() => setTab("public")} mobile>
                   Public
@@ -398,12 +334,31 @@ export default function Page() {
                   {loading ? <LoadingSkeleton /> : tab === "public" ? <PublicView state={state} /> : (
                     <InstitutionalView
                       state={state}
-                      trade={{
+                      tradeRequest={{
+                        devnet: auth?.mode === "devnet",
                         amount,
                         maxPrice,
-                        delivered: realDelivered,
-                        payment: realPayment,
-                        registry: auth?.mode === "devnet",
+                        assetToBuy,
+                        settlementAsset,
+                        realDelivered,
+                        realPayment,
+                        envelope,
+                        running,
+                        disabled: !allReachable || needsAuth,
+                        onAmountChange: setAmount,
+                        onMaxPriceChange: setMaxPrice,
+                        onAssetToBuyChange: setAssetToBuy,
+                        onSettlementAssetChange: setSettlementAsset,
+                        onRealDeliveredChange: setRealDelivered,
+                        onRealPaymentChange: setRealPayment,
+                        onMatchMandate: () => {
+                          if (!activeMandate) return;
+                          setAssetToBuy(activeMandate.assetToBuy);
+                          setSettlementAsset(activeMandate.settlementAsset);
+                          setAmount(String(Number(activeMandate.maxAmount)));
+                          setMaxPrice(Number(activeMandate.maxPrice).toFixed(2));
+                        },
+                        onRun: runRound,
                       }}
                     />
                   )}
@@ -440,122 +395,6 @@ function TabButton({ active, onClick, children, mobile }: { active: boolean; onC
     >
       {children}
     </button>
-  );
-}
-
-function EnvelopeReadout({ envelope, onMatch }: { envelope: { mandate: MandateView; breaches: string[]; within: boolean } | null; onMatch?: () => void }) {
-  if (!envelope) {
-    return (
-      <p className="mt-4 border-t border-border pt-4 font-mono text-[10px] leading-relaxed text-zinc-600">
-        No approved mandate on the ledger. Running a round will create one, then open the RFQ under it.
-      </p>
-    );
-  }
-  const { mandate, breaches, within } = envelope;
-  return (
-    <div
-      className={`mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4 ${
-        within ? "border-border" : "border-destructive/30"
-      }`}
-    >
-      <p className={`flex items-center gap-2 font-mono text-[10px] ${within ? "text-primary" : "text-destructive"}`}>
-        {within ? <ShieldCheck className="size-3 shrink-0" /> : <TriangleAlert className="size-3 shrink-0" />}
-        <span className="uppercase tracking-[0.14em]">{within ? "inside envelope" : `outside envelope: ${breaches.join(", ")}`}</span>
-        <span className="text-muted-foreground">·</span>
-        <span className="text-foreground">{mandate.reference}</span>
-      </p>
-      <p className="font-mono text-[10px] text-muted-foreground">
-        ceiling {Number(mandate.maxPrice).toFixed(2)} · max {Number(mandate.maxAmount).toLocaleString("en-US", { maximumFractionDigits: 2 })}
-        {!within && (
-          <button
-            type="button"
-            onClick={() => onMatch?.()}
-            className="ml-3 uppercase tracking-[0.14em] text-primary underline decoration-primary/40 underline-offset-4 transition-colors hover:decoration-primary"
-          >
-            match mandate
-          </button>
-        )}
-      </p>
-    </div>
-  );
-}
-
-function AssetField({
-  label,
-  value,
-  onChange,
-  listId,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  listId: string;
-}) {
-  return (
-    <label className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-      {label}
-      <input
-        list={listId}
-        type="text"
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,31}"
-        maxLength={32}
-        placeholder="e.g. cTBILL"
-        className="mt-2 block w-full rounded-xl border border-border bg-[#030206]/70 px-3 py-2.5 font-mono text-[12px] normal-case tracking-normal text-foreground outline-none transition-colors focus:border-primary/60"
-      />
-      <datalist id={listId}>
-        <option value="cTBILL" />
-        <option value="cUSDC" />
-      </datalist>
-    </label>
-  );
-}
-
-/** A registry instrument picker. The choice is closed because the profile's instruments are fixed. */
-function InstrumentField({
-  label,
-  value,
-  onChange,
-  exclude,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  exclude?: string;
-}) {
-  const options = ["CBTC", "BETH"].filter((o) => o !== exclude);
-  return (
-    <label className="block">
-      <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-border bg-[#030206]/60 px-3 py-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-primary/60"
-      >
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function NumberField({ label, value, onChange, step = "1" }: { label: string; value: string; onChange: (value: string) => void; step?: string }) {
-  return (
-    <label className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-      {label}
-      <input
-        type="number"
-        min="0"
-        step={step}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="mt-2 block w-full rounded-xl border border-border bg-[#030206]/70 px-3 py-2.5 font-mono text-[12px] normal-case tracking-normal text-foreground outline-none transition-colors focus:border-primary/60"
-      />
-    </label>
   );
 }
 
