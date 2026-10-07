@@ -6,7 +6,7 @@ An institutional treasury needs to rebalance without giving an execution agent u
 
 ## Live demo
 
-[Open the deployed ShadowDesk dashboard](https://shadowdesk-inky.vercel.app)
+[Open the deployed ShadowDesk landing page](https://shadowdesk-inky.vercel.app) · [Enter the dashboard](https://shadowdesk-inky.vercel.app/dashboard)
 
 The Vercel project deploys the Next.js application from `frontend/`.
 
@@ -147,7 +147,7 @@ cd frontend && npm run build
 
 `cd agents && npm run e2e:award-chain` exercises the award chain against a real single-node ledger and needs no Docker: start one with `cd daml && dpm sandbox --dar .daml/dist/shadowdesk-treasury-1.0.0.dar`. It creates an RFQ, quotes, seals, settles, and asserts that a `Deal` which disagrees with the approved mandate or awarded quote is rejected without moving the security.
 
-The live UI flow can be checked at `http://localhost:3001` after the localnet bootstrap.
+The landing page is at `http://localhost:3001`; the live UI flow is at `http://localhost:3001/dashboard` after the localnet bootstrap.
 Verify both participants are live, run a custom RFQ, confirm the requested amount and instruments in the Institutional view, and confirm the privacy result reports zero winner quotes to the losing dealer.
 
 For a repeatable API/UI smoke check without resetting the ledger, run `./scripts/localnet/smoke-test.sh` while the sandbox and dashboard are already running.

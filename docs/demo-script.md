@@ -1,6 +1,6 @@
 # ShadowDesk - Five-Minute Demo Script
 
-Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environment so the demo starts from a fresh two-participant ledger with one completed round. Have the dashboard open at `http://localhost:3001`.
+Setup before recording: run `./scripts/localnet/run-all.sh` from a clean environment so the demo starts from a fresh two-participant ledger with one completed round. Have the dashboard open at `http://localhost:3001/dashboard`.
 
 ## 1. The problem (0:40)
 

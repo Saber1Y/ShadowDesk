@@ -1,257 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { ArrowUpRight, Terminal } from "lucide-react";
-import type { AuthStatus, DashboardState, StreamLine } from "@/lib/types";
-import { PublicView } from "@/components/views/PublicView";
-import { InstitutionalView } from "@/components/views/InstitutionalView";
+import { motion } from "motion/react";
+import { ArrowRight, Check, CircleDot, EyeOff, LockKeyhole, Network, ShieldCheck, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { ShadowDeskMark } from "@/components/shadowdesk-mark";
-import { FailureNotice } from "@/components/failure-notice";
-import { describeFailure, type FriendlyFailure } from "@/lib/messages";
-import { WalletAuth, WalletAuthGate } from "@/components/wallet-auth";
 
-type Tab = "public" | "institutional";
-
-const DEFAULT_STATE: DashboardState = {
-  updatedAt: "",
-  participants: [
-    { name: "participant1", jsonApi: "http://127.0.0.1:6864", reachable: false, ledgerEnd: null },
-    { name: "participant2", jsonApi: "http://127.0.0.1:18003", reachable: false, ledgerEnd: null },
-  ],
-  parties: { buyer: null, dealerA: null, dealerB: null },
-  public: { events: [], counts: { rfqs: 0, proposals: 0, sealed: 0, deals: 0, receipts: 0, assets: 0 } },
-  institutional: {
-    buyerParty: null, assets: [], rfqs: [], proposals: [], sealedQuotes: [], deals: [], receipts: [], mandates: [],
-    realHoldings: [], realLegs: [],
-  },
-  privacy: { checked: false, winnerDealer: null, losingDealer: null, losingSeesWinnerQuotes: null },
+const reveal = {
+  initial: { opacity: 0, y: 18 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.55, ease: [0.16, 1, 0.3, 1] as const },
 };
 
-export default function Page() {
-  const [tab, setTab] = useState<Tab>("public");
-  const [state, setState] = useState<DashboardState>(DEFAULT_STATE);
-  const [auth, setAuth] = useState<AuthStatus | null>(null);
-  const [authError, setAuthError] = useState<string | undefined>();
-  const [loading, setLoading] = useState(true);
-  const [failure, setFailure] = useState<FriendlyFailure | null>(null);
-  const [running, setRunning] = useState(false);
-  const [lines, setLines] = useState<string[]>([]);
-  const [consoleOpen, setConsoleOpen] = useState(false);
-  const [amount, setAmount] = useState("1000000");
-  const [maxPrice, setMaxPrice] = useState("101");
-  const [assetToBuy, setAssetToBuy] = useState("cTBILL");
-  const [settlementAsset, setSettlementAsset] = useState("cUSDC");
-  // The registry pair actually settled on DevNet, chosen in the UI rather than
-  // taken from a deployment default.
-  const [realDelivered, setRealDelivered] = useState("CBTC");
-  const [realPayment, setRealPayment] = useState("BETH");
-  const abortRef = useRef<AbortController | null>(null);
-
-  const refreshAuth = useCallback(async () => {
-    try {
-      const resp = await fetch("/api/auth/session", { cache: "no-store" });
-      if (!resp.ok) throw new Error(`status ${resp.status}`);
-      setAuth((await resp.json()) as AuthStatus);
-    } catch {
-      setAuth((previous) => previous ?? {
-        mode: "devnet",
-        authenticated: false,
-        user: null,
-        reason: "configuration",
-      });
-    }
-  }, []);
-
-  const refresh = useCallback(async () => {
-    try {
-      const resp = await fetch("/api/state", { cache: "no-store" });
-      const body = resp.ok ? null : await resp.json().catch(() => null) as { error?: string; authRequired?: boolean } | null;
-      if (resp.status === 401 && body?.authRequired) {
-        setAuth((previous) => previous?.mode === "devnet"
-          ? { ...previous, authenticated: false, user: null, reason: "expired" }
-          : { mode: "devnet", authenticated: false, user: null, reason: "expired" });
-        setState(DEFAULT_STATE);
-        setFailure(null);
-        return;
-      }
-      if (!resp.ok) {
-        throw new Error(body?.error ?? `status ${resp.status}`);
-      }
-      const j = (await resp.json()) as DashboardState;
-      setState(j);
-      setFailure((previous) => previous?.title === "The trading venue is offline" ? null : previous);
-    } catch (err) {
-      const detail = (err as Error).message;
-      setFailure(describeFailure(detail));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshAuth();
-    const errorCode = new URLSearchParams(window.location.search).get("authError") ?? undefined;
-    if (errorCode) setAuthError(errorCode);
-  }, [refreshAuth]);
-
-  useEffect(() => {
-    if (!auth) return;
-    if (auth.mode === "devnet" && !auth.authenticated) {
-      setLoading(false);
-      return;
-    }
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 4000);
-    return () => window.clearInterval(timer);
-  }, [auth?.mode, auth?.authenticated, refresh]);
-
-  const runRound = async () => {
-    if (running) return;
-    if (auth?.mode === "devnet" && !auth.authenticated) {
-      setFailure(describeFailure("Connect the Canton wallet before running a round.", "round"));
-      return;
-    }
-    const parsedAmount = Number(amount);
-    const parsedMaxPrice = Number(maxPrice);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || !Number.isFinite(parsedMaxPrice) || parsedMaxPrice <= 0) {
-      const nextFailure = describeFailure("Enter positive values for amount and maximum price.", "round");
-      setFailure(nextFailure);
-      setLines(["ROUND REJECTED: invalid trade details"]);
-      return;
-    }
-    if (auth?.mode === "devnet" && realDelivered === realPayment) {
-      const nextFailure = describeFailure("The delivered and settlement instruments must be different.", "round");
-      setFailure(nextFailure);
-      setLines(["ROUND REJECTED: delivered and settlement instruments must differ"]);
-      return;
-    }
-    if (assetToBuy === settlementAsset) {
-      const nextFailure = describeFailure("The security and settlement instrument must be different.", "round");
-      setFailure(nextFailure);
-      setLines(["ROUND REJECTED: security and settlement instruments must differ"]);
-      return;
-    }
-    abortRef.current?.abort();
-    const ab = new AbortController();
-    abortRef.current = ab;
-    setRunning(true);
-    setLines([]);
-    setConsoleOpen(true);
-    try {
-      const resp = await fetch("/api/replay", {
-        method: "POST",
-        signal: ab.signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: parsedAmount,
-          maxPrice: parsedMaxPrice,
-          assetToBuy,
-          settlementAsset,
-          realDelivered,
-          realPayment,
-        }),
-      });
-      if (!resp.ok) {
-        const j = await resp.json().catch(() => null) as { reason?: string } | null;
-        const reason = j?.reason ?? `status ${resp.status}`;
-        setFailure(describeFailure(reason, "round"));
-        setLines([`ROUND REJECTED: ${reason}`]);
-        return;
-      }
-      const reader = resp.body?.getReader();
-      if (!reader) return;
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        for (const raw of chunk.split("\n")) {
-          if (!raw.trim()) continue;
-          let parsed: StreamLine;
-          try {
-            parsed = JSON.parse(raw);
-          } catch {
-            setLines((prev) => [...prev, raw]);
-            continue;
-          }
-          if (parsed.snapshot) {
-            setState(parsed.snapshot);
-            setFailure(null);
-          }
-          if (parsed.snapshotError) {
-            setFailure(describeFailure(parsed.snapshotError, "stream"));
-            setLines((prev) => [...prev, `SNAPSHOT ERROR: ${parsed.snapshotError}`]);
-          }
-          if (parsed.line) {
-            const line = parsed.line;
-            setLines((prev) => [...prev, line]);
-            const lower = line.toLowerCase();
-            if (lower.includes("failed") || lower.includes("rejected") || lower.includes("violation")) {
-              setFailure(describeFailure(line, "round"));
-            }
-          }
-          if (parsed.done) setRunning(false);
-        }
-      }
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") {
-        setFailure(describeFailure((err as Error).message, "stream"));
-        setLines((prev) => [...prev, `STREAM ERROR: ${(err as Error).message}`]);
-      }
-    } finally {
-      setRunning(false);
-      void refresh();
-    }
-  };
-
-  const allReachable = state.participants.every((p) => p.reachable);
-  const needsAuth = auth?.mode === "devnet" && !auth.authenticated;
-  const participantCount = new Set(state.participants.map((participant) => participant.jsonApi)).size;
-
-  // The envelope is the product: compare the entered trade against the mandate
-  // the ledger actually enforces. This only warns. Rejection stays on-ledger so
-  // the runtime assertion is what stops an out-of-policy trade.
-  const mandates = state.institutional.mandates;
-  const activeMandate = useMemo(() => {
-    return (mandates ?? []).filter((m) => m.status === "ACTIVE").at(-1) ?? null;
-  }, [mandates]);
-
-  const envelope = useMemo(() => {
-    if (!activeMandate) return null;
-    const amountNumber = Number(amount);
-    const priceNumber = Number(maxPrice);
-    const breaches: string[] = [];
-    if (Number.isFinite(amountNumber) && amountNumber > Number(activeMandate.maxAmount)) breaches.push("amount");
-    if (Number.isFinite(priceNumber) && priceNumber > Number(activeMandate.maxPrice)) breaches.push("price ceiling");
-    if (assetToBuy !== activeMandate.assetToBuy) breaches.push("instrument");
-    if (settlementAsset !== activeMandate.settlementAsset) breaches.push("settlement asset");
-    return { mandate: activeMandate, breaches, within: breaches.length === 0 };
-  }, [activeMandate, amount, maxPrice, assetToBuy, settlementAsset]);
-
-  // Seed the request from the approved envelope the first time one appears, so
-  // the operator starts inside policy instead of on top of an arbitrary default.
-  // Seeding happens once: later mandate changes never overwrite typed input.
-  const seededFromMandate = useRef(false);
-  useEffect(() => {
-    if (!activeMandate || seededFromMandate.current) return;
-    seededFromMandate.current = true;
-    setAssetToBuy(activeMandate.assetToBuy);
-    setSettlementAsset(activeMandate.settlementAsset);
-    setAmount(String(Number(activeMandate.maxAmount)));
-    setMaxPrice(Number(activeMandate.maxPrice).toFixed(2));
-  }, [activeMandate]);
-
-  const retryFailure = () => {
-    if (failure?.title === "The trade request was not completed" || failure?.title === "The trade did not settle" || failure?.title === "Check the trade details") {
-      void runRound();
-      return;
-    }
-    void refresh();
-  };
-
+export default function LandingPage() {
   return (
-    <main className="relative min-h-[100dvh] overflow-hidden bg-[#030206] px-5 py-5 text-foreground md:px-10">
+    <main className="relative min-h-[100dvh] overflow-hidden bg-[#030206] px-5 text-foreground md:px-10">
       <div
         className="pointer-events-none absolute inset-0 opacity-20"
         style={{
@@ -259,237 +21,200 @@ export default function Page() {
           backgroundSize: "32px 32px",
         }}
       />
+      <div className="pointer-events-none absolute -right-48 top-24 size-[34rem] rounded-full bg-primary/[0.06] blur-3xl" />
 
-      <div className="relative z-10 mx-auto max-w-[1400px]">
-        <header className="fixed left-1/2 top-5 z-50 flex w-[min(1120px,calc(100vw-2rem))] -translate-x-1/2 items-center justify-between rounded-full border border-border bg-card/70 px-4 py-3 shadow-xl shadow-black/10 backdrop-blur-xl md:px-5">
-          <div className="flex items-center gap-3 font-mono text-sm tracking-[0.16em]">
+      <div className="relative z-10 mx-auto max-w-[1280px]">
+        <header className="fixed left-1/2 top-5 z-50 flex w-[min(1120px,calc(100vw-2rem))] -translate-x-1/2 items-center justify-between rounded-full border border-border bg-card/75 px-4 py-3 shadow-xl shadow-black/10 backdrop-blur-xl md:px-5">
+          <Link href="/" className="flex items-center gap-3 font-mono text-sm tracking-[0.16em]">
             <span className="flex size-7 items-center justify-center rounded-md border border-border bg-card/80 p-1 shadow-[0_0_15px_rgba(243,255,151,0.15)]">
               <ShadowDeskMark className="size-6" />
             </span>
-            <span className="hidden text-foreground sm:block">SHADOWDESK</span>
-            <span className="hidden font-mono text-[9px] tracking-[0.2em] text-muted-foreground lg:block">MANDATE-BOUND TREASURY EXECUTION</span>
-          </div>
-
-          <nav className="hidden items-center gap-1 text-sm text-muted-foreground md:flex">
-            <TabButton active={tab === "public"} onClick={() => setTab("public")}>
-              Public projection
-            </TabButton>
-            <TabButton active={tab === "institutional"} onClick={() => setTab("institutional")}>
-              Institutional
-            </TabButton>
+            <span>SHADOWDESK</span>
+          </Link>
+          <nav className="hidden items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground lg:flex">
+            <a href="#model" className="rounded-full px-4 py-2 transition-colors hover:text-foreground">The model</a>
+            <a href="#flow" className="rounded-full px-4 py-2 transition-colors hover:text-foreground">How it works</a>
           </nav>
-
-          <div className="flex items-center gap-2">
-            {auth && <WalletAuth status={auth} />}
-            <StatusDot ok={allReachable} running={running} />
-          </div>
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-[0_0_20px_rgba(243,255,151,0.2)] transition-[transform,background-color] duration-200 hover:-translate-y-0.5 hover:bg-[#f7ffb5] active:scale-[0.98]"
+          >
+            Open dashboard
+            <ArrowRight className="size-3.5" />
+          </Link>
         </header>
 
-        <div className="pt-28 md:pt-32">
-          {auth === null ? (
-            <AuthLoading />
-          ) : auth.mode === "devnet" && !auth.authenticated ? (
-            <WalletAuthGate status={auth} error={authError ?? auth.reason} />
-          ) : (
-            <>
-              <motion.div
-                initial={{ y: -12, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"
+        <section className="grid min-h-[100dvh] items-center gap-14 pb-16 pt-28 md:grid-cols-[0.9fr_1.1fr] md:gap-16 md:pb-20 md:pt-32">
+          <motion.div {...reveal} className="max-w-xl">
+            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-primary">Private execution / Canton Network</p>
+            <h1 className="mt-5 max-w-[11ch] text-5xl font-semibold leading-[0.96] tracking-[-0.065em] md:text-7xl">
+              Treasury execution, <span className="text-primary">bound to the mandate.</span>
+            </h1>
+            <p className="mt-7 max-w-[38ch] text-base leading-7 text-muted-foreground">
+              ShadowDesk turns approved treasury policy into private quotes and atomic settlement.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <Link
+                href="/dashboard"
+                className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground shadow-[0_0_24px_rgba(243,255,151,0.18)] transition-[transform,background-color] duration-200 hover:-translate-y-0.5 hover:bg-[#f7ffb5] active:scale-[0.98]"
               >
+                Enter the workspace
+                <ArrowRight className="size-4" />
+              </Link>
+              <a href="#model" className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground">
+                See the model
+              </a>
+            </div>
+            <div className="mt-10 flex flex-wrap gap-x-6 gap-y-2 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-600">
+              <span className="flex items-center gap-2"><span className="size-1.5 rounded-full bg-primary animate-pulse" /> Live ledger projection</span>
+              <span>Two-party approval</span>
+              <span>Atomic DvP</span>
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, x: 24 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.7, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
+            className="relative"
+          >
+            <LedgerArtifact />
+          </motion.div>
+        </section>
+
+        <section className="border-y border-border py-5" aria-label="System qualities">
+          <div className="grid grid-cols-2 gap-4 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-500 md:grid-cols-4">
+            <span className="flex items-center gap-2"><LockKeyhole className="size-3 text-primary" /> Stakeholder privacy</span>
+            <span className="flex items-center gap-2"><ShieldCheck className="size-3 text-primary" /> Mandate assertions</span>
+            <span className="flex items-center gap-2"><Network className="size-3 text-primary" /> Participant views</span>
+            <span className="flex items-center gap-2"><Check className="size-3 text-primary" /> DvP receipt</span>
+          </div>
+        </section>
+
+        <section id="model" className="grid gap-12 py-28 md:grid-cols-[0.72fr_1.28fr] md:gap-20 md:py-36">
+          <motion.div {...reveal} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.3 }}>
+            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-primary">The privacy model</p>
+            <h2 className="mt-4 max-w-md text-4xl font-semibold leading-[1] tracking-[-0.055em] md:text-5xl">
+              A public window into a private workflow.
+            </h2>
+            <p className="mt-6 max-w-md text-[15px] leading-7 text-muted-foreground">
+              The public projection exposes metadata. The institutional workspace exposes only the authorized buyer view.
+            </p>
+          </motion.div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <ModelPanel icon={EyeOff} label="Competitor view" title="No rival prices" detail="Each dealer signs its own proposal. A competing dealer cannot query the other quote payload." />
+            <ModelPanel icon={ShieldCheck} label="Institutional view" title="Policy before action" detail="The buyer and risk officer approve the envelope before an agent can open the RFQ." />
+            <div className="rounded-2xl border border-primary/25 bg-primary/[0.05] p-6 sm:col-span-2">
+              <div className="flex items-start justify-between gap-5">
                 <div>
-                  <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-primary">
-                    {running ? "round in flight" : allReachable ? "fabric live" : "awaiting fabric"}
-                  </p>
-                  <h1 className="mt-2 text-3xl font-semibold leading-[1] tracking-[-0.045em] md:text-5xl">
-                    The agent <span className="text-primary">cannot settle outside its mandate.</span>
-                  </h1>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">Operator boundary</p>
+                  <p className="mt-3 max-w-xl text-lg font-medium tracking-[-0.02em] text-foreground">ShadowDesk coordinates the flow. Canton enforces who can see and settle it.</p>
                 </div>
-                <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
-                  <span className={`size-1.5 rounded-full ${allReachable ? "bg-primary animate-pulse" : "bg-zinc-500"}`} />
-                  synced at {state.updatedAt ? new Date(state.updatedAt).toLocaleTimeString("en-US", { hour12: false }) : "-"}
-                </div>
-              </motion.div>
-
-              {failure && <FailureNotice failure={failure} onRetry={retryFailure} />}
-
-              <div className="md:hidden mb-5 grid grid-cols-2 gap-2">
-                <TabButton active={tab === "public"} onClick={() => setTab("public")} mobile>
-                  Public
-                </TabButton>
-                <TabButton active={tab === "institutional"} onClick={() => setTab("institutional")} mobile>
-                  Institutional
-                </TabButton>
+                <Sparkles className="hidden size-5 shrink-0 text-primary sm:block" />
               </div>
+            </div>
+          </div>
+        </section>
 
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={tab}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-                >
-                  {loading ? <LoadingSkeleton /> : tab === "public" ? <PublicView state={state} /> : (
-                    <InstitutionalView
-                      state={state}
-                      tradeRequest={{
-                        devnet: auth?.mode === "devnet",
-                        amount,
-                        maxPrice,
-                        assetToBuy,
-                        settlementAsset,
-                        realDelivered,
-                        realPayment,
-                        envelope,
-                        running,
-                        disabled: !allReachable || needsAuth,
-                        onAmountChange: setAmount,
-                        onMaxPriceChange: setMaxPrice,
-                        onAssetToBuyChange: setAssetToBuy,
-                        onSettlementAssetChange: setSettlementAsset,
-                        onRealDeliveredChange: setRealDelivered,
-                        onRealPaymentChange: setRealPayment,
-                        onMatchMandate: () => {
-                          if (!activeMandate) return;
-                          setAssetToBuy(activeMandate.assetToBuy);
-                          setSettlementAsset(activeMandate.settlementAsset);
-                          setAmount(String(Number(activeMandate.maxAmount)));
-                          setMaxPrice(Number(activeMandate.maxPrice).toFixed(2));
-                        },
-                        onRun: runRound,
-                      }}
-                    />
-                  )}
-                </motion.div>
-              </AnimatePresence>
+        <section id="flow" className="border-t border-border py-28 md:py-36">
+          <div className="max-w-xl">
+            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-primary">The execution path</p>
+            <h2 className="mt-4 text-4xl font-semibold leading-[1] tracking-[-0.055em] md:text-5xl">From policy to proof.</h2>
+          </div>
+          <div className="mt-14 grid gap-0 border-y border-border md:grid-cols-3">
+            <FlowStep index="01" title="Approve the envelope" detail="Buyer and risk officer define the dealers, instruments, amount, price ceiling, and expiry." />
+            <FlowStep index="02" title="Invite private quotes" detail="The agent opens a mandate-bound RFQ. Dealers price independently on their participant views." />
+            <FlowStep index="03" title="Settle atomically" detail="The accepted quote becomes binding, then delivery-versus-payment writes one auditable receipt." />
+          </div>
+        </section>
 
-              <footer className="mt-14 flex flex-col items-center justify-between gap-3 border-t border-border pt-6 pb-2 font-mono text-[9px] tracking-[0.14em] text-zinc-600 sm:flex-row">
-                <span>SHADOWDESK · CANTON NETWORK 3.5.17 · {participantCount} PARTICIPANT{participantCount === 1 ? "" : "S"} · ONE SYNCHRONIZER</span>
-                <span>PUBLIC VIEW = METADATA ONLY · BUYER VIEW = AUTHORIZED PROJECTION</span>
-              </footer>
-            </>
-          )}
-        </div>
+        <section className="relative overflow-hidden border-t border-border py-28 md:py-36">
+          <div className="pointer-events-none absolute right-0 top-1/2 size-72 -translate-y-1/2 rounded-full bg-primary/[0.08] blur-3xl" />
+          <div className="relative flex flex-col items-start justify-between gap-8 md:flex-row md:items-end">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-primary">Live environment</p>
+              <h2 className="mt-4 max-w-2xl text-4xl font-semibold leading-[1] tracking-[-0.055em] md:text-6xl">See the mandate hold the line.</h2>
+            </div>
+            <Link href="/dashboard" className="inline-flex shrink-0 items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground shadow-[0_0_24px_rgba(243,255,151,0.18)] transition-[transform,background-color] duration-200 hover:-translate-y-0.5 hover:bg-[#f7ffb5] active:scale-[0.98]">
+              Open live dashboard
+              <ArrowRight className="size-4" />
+            </Link>
+          </div>
+        </section>
+
+        <footer className="flex flex-col justify-between gap-3 border-t border-border py-6 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600 sm:flex-row">
+            <span>SHADOWDESK · CANTON NETWORK</span>
+          <span>PUBLIC VIEW = METADATA ONLY · INSTITUTIONAL VIEW = AUTHORIZED PROJECTION</span>
+        </footer>
       </div>
-
-      <ConsoleDock
-        open={consoleOpen}
-        onToggle={() => setConsoleOpen((v) => !v)}
-        running={running}
-        lines={lines}
-      />
     </main>
   );
 }
 
-function TabButton({ active, onClick, children, mobile }: { active: boolean; onClick: () => void; children: React.ReactNode; mobile?: boolean }) {
-  const base = mobile
-    ? "rounded-full px-4 py-2 text-sm"
-    : "rounded-full px-4 py-2 transition-colors hover:text-foreground";
+function LedgerArtifact() {
   return (
-    <button
-      onClick={onClick}
-      className={`${base} ${active ? "bg-foreground text-background" : "text-muted-foreground"}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function StatusDot({ ok, running }: { ok: boolean; running: boolean }) {
-  return (
-    <span className="hidden items-center gap-2 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground lg:flex">
-      <span className={`size-1.5 rounded-full ${running ? "bg-amber-400 animate-pulse" : ok ? "bg-primary animate-pulse" : "bg-red-400"}`} />
-      {running ? "executing" : ok ? "live" : "offline"}
-    </span>
-  );
-}
-
-function AuthLoading() {
-  return (
-    <div className="rounded-2xl border border-border bg-card/45 p-8 shadow-xl shadow-black/10 backdrop-blur-xl">
-      <div className="h-3 w-32 animate-pulse rounded-full bg-primary/20" />
-      <div className="mt-5 h-10 w-3/4 animate-pulse rounded-xl bg-card" />
-      <div className="mt-4 h-4 w-full max-w-xl animate-pulse rounded-full bg-card" />
-      <div className="mt-2 h-4 w-2/3 animate-pulse rounded-full bg-card" />
-    </div>
-  );
-}
-
-function LoadingSkeleton() {
-  return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-      <div className="h-[320px] animate-pulse rounded-2xl border border-border bg-card/40 lg:col-span-4" />
-      <div className="h-[320px] animate-pulse rounded-2xl border border-border bg-card/40 lg:col-span-4" />
-      <div className="h-[320px] animate-pulse rounded-2xl border border-border bg-card/40 lg:col-span-4" />
-    </div>
-  );
-}
-
-function ConsoleDock({ open, onToggle, running, lines }: { open: boolean; onToggle: () => void; running: boolean; lines: string[] }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [lines, open]);
-
-  return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ y: 110, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 110, opacity: 0 }}
-          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-          className="fixed bottom-4 left-1/2 z-40 w-[min(900px,calc(100vw-2rem))] -translate-x-1/2"
-        >
-          <div className="overflow-hidden rounded-2xl border border-border bg-[#030206]/95 shadow-2xl shadow-black/30 backdrop-blur-xl">
-            <div className="flex items-center gap-2 border-b border-border/50 bg-[#0d0e12] px-4 py-3">
-              <span className="size-2.5 rounded-full bg-red-500/80" />
-              <span className="size-2.5 rounded-full bg-yellow-500/80" />
-              <span className="size-2.5 rounded-full bg-green-500/80" />
-              <Terminal className="ml-2 size-3.5 text-primary" />
-              <span className="font-mono text-[10px] text-muted-foreground">agent_console · two participants</span>
-              <button onClick={onToggle} className="ml-auto font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground">
-                {running ? "minimize" : "close"}
-              </button>
-            </div>
-            <div ref={scrollRef} className="h-[260px] overflow-y-auto p-5 font-mono text-[12px] leading-relaxed">
-              {lines.map((l, i) => (
-                <ConsoleLine key={i} text={l} />
-              ))}
-              {running && (
-                <p className="mt-1 flex items-center gap-2 text-zinc-400">
-                  <ArrowUpRight className="size-3 animate-pulse text-primary" />
-                  executing on the live ledger…
-                </p>
-              )}
+    <div className="relative mx-auto max-w-[590px] rotate-[1.5deg] rounded-[1.5rem] border border-border bg-card/65 p-3 shadow-2xl shadow-black/30 backdrop-blur-xl">
+      <div className="rounded-[1.1rem] border border-border/80 bg-[#08090d] p-5 md:p-7">
+        <div className="flex items-center justify-between border-b border-border/70 pb-5">
+          <div className="flex items-center gap-3">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground"><CircleDot className="size-4" /></span>
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">ShadowDesk / execution console</p>
+              <p className="mt-1 text-sm font-medium text-foreground">Mandate-bound treasury round</p>
             </div>
           </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          <span className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.14em] text-primary"><span className="size-1.5 rounded-full bg-primary animate-pulse" /> Live</span>
+        </div>
+        <div className="grid gap-3 py-6 sm:grid-cols-[1.1fr_0.9fr]">
+          <div className="rounded-xl border border-primary/30 bg-primary/[0.05] p-4">
+            <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-primary">Approved mandate</p>
+            <p className="mt-4 text-2xl font-semibold tracking-[-0.05em] text-foreground">RFQ / 017</p>
+            <div className="mt-5 grid grid-cols-2 gap-4 font-mono text-[10px]">
+              <div><p className="text-zinc-600">MAX SIZE</p><p className="mt-1 text-foreground">1,000,000</p></div>
+              <div><p className="text-zinc-600">CEILING</p><p className="mt-1 text-foreground">101.00</p></div>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <SignalRow label="Buyer + risk" value="APPROVED" tone="text-primary" />
+            <SignalRow label="Dealer quotes" value="2 PRIVATE" tone="text-lilac" />
+            <SignalRow label="Settlement" value="ATOMIC DVP" tone="text-primary" />
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-[#030206]/60 p-4 font-mono text-[10px] leading-relaxed">
+          <div className="flex gap-3"><span className="text-zinc-600">09:41:02</span><span className="text-blue-300">RFQ_CREATED</span><span className="text-zinc-400">private dealer window opened</span></div>
+          <div className="mt-2 flex gap-3"><span className="text-zinc-600">09:41:04</span><span className="text-purple-300">QUOTE_SEALED</span><span className="text-zinc-400">winner bound to mandate</span></div>
+          <div className="mt-2 flex gap-3"><span className="text-zinc-600">09:41:06</span><span className="text-primary">DVP_SETTLED</span><span className="text-zinc-400">receipt written atomically</span></div>
+        </div>
+      </div>
+      <div className="pointer-events-none absolute -bottom-5 -left-5 rounded-xl border border-primary/20 bg-card/80 px-4 py-3 shadow-xl backdrop-blur-xl">
+        <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-500">Participant visibility</p>
+        <p className="mt-1 font-mono text-[11px] text-primary">LOSING DEALER / 0 WINNER QUOTES</p>
+      </div>
+    </div>
   );
 }
 
-function ConsoleLine({ text }: { text: string }) {
-  const lower = text.toLowerCase();
-  let cls = "text-taupe";
-  if (lower.startsWith("=== ")) cls = "text-primary font-semibold";
-  else if (lower.includes("proposal") || lower.includes("quote") || lower.startsWith("  proposal")) cls = "text-purple";
-  else if (lower.startsWith("[dealer ") || lower.includes("sees 0")) cls = "text-purple";
-  else if (lower.includes("winner") || lower.includes("sealed") || lower.startsWith("[venue]")) cls = "text-lilac";
-  else if (lower.includes("settled") || lower.includes("holds") || lower.includes("complete") || lower.includes("but")) cls = "text-primary";
-  else if (lower.includes("error") || lower.includes("failed") || lower.includes("violation") || lower.includes("rejected")) cls = "text-red-400";
+function SignalRow({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return <div className="flex items-center justify-between rounded-lg border border-border bg-[#030206]/40 px-3 py-3 font-mono text-[9px] uppercase tracking-[0.12em]"><span className="text-zinc-600">{label}</span><span className={tone}>{value}</span></div>;
+}
 
-  if (lower.startsWith("[") || lower.startsWith("  ")) {
-    return (
-      <p className={`whitespace-pre-wrap break-words ${cls}`}>
-        <span className="font-mono text-[10px] text-zinc-600">{"> "}</span>
-        {text}
-      </p>
-    );
-  }
-  return <p className={`whitespace-pre-wrap break-words ${cls}`}>{text}</p>;
+function ModelPanel({ icon: Icon, label, title, detail }: { icon: typeof EyeOff; label: string; title: string; detail: string }) {
+  return (
+    <motion.div whileInView={{ opacity: 1, y: 0 }} initial={{ opacity: 0, y: 14 }} viewport={{ once: true, amount: 0.3 }} transition={{ duration: 0.5 }} className="rounded-2xl border border-border bg-card/55 p-6 shadow-xl shadow-black/10">
+      <Icon className="size-5 text-primary" />
+      <p className="mt-8 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">{label}</p>
+      <h3 className="mt-3 text-xl font-semibold tracking-[-0.03em] text-foreground">{title}</h3>
+      <p className="mt-3 text-sm leading-6 text-muted-foreground">{detail}</p>
+    </motion.div>
+  );
+}
+
+function FlowStep({ index, title, detail }: { index: string; title: string; detail: string }) {
+  return (
+    <motion.article whileInView={{ opacity: 1, y: 0 }} initial={{ opacity: 0, y: 14 }} viewport={{ once: true, amount: 0.3 }} transition={{ duration: 0.5 }} className="border-b border-border p-6 first:border-t md:border-b-0 md:border-r md:p-8 md:first:border-t-0 md:last:border-r-0">
+      <p className="font-mono text-[10px] tracking-[0.18em] text-primary">{index}</p>
+      <h3 className="mt-12 text-2xl font-semibold tracking-[-0.04em] text-foreground">{title}</h3>
+      <p className="mt-4 text-sm leading-6 text-muted-foreground">{detail}</p>
+    </motion.article>
+  );
 }

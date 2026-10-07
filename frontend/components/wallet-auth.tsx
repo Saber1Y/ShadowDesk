@@ -13,7 +13,7 @@ const errorMessage = (error?: string): string => {
   return "The Canton sign-in did not complete. Start the connection again.";
 };
 
-export function WalletAuth({ status }: { status: AuthStatus }) {
+export function WalletAuth({ status, returnTo = "/" }: { status: AuthStatus; returnTo?: string }) {
   if (status.mode !== "devnet") return null;
   if (status.authenticated) {
     return (
@@ -38,14 +38,14 @@ export function WalletAuth({ status }: { status: AuthStatus }) {
     );
   }
   return (
-    <a href="/api/auth/login" className={actionClass}>
+    <a href={`/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`} className={actionClass}>
       <LogIn className="size-3.5" />
       <span className="hidden sm:inline">Connect wallet</span>
     </a>
   );
 }
 
-export function WalletAuthGate({ status, error }: { status: AuthStatus; error?: string }) {
+export function WalletAuthGate({ status, error, returnTo = "/" }: { status: AuthStatus; error?: string; returnTo?: string }) {
   if (status.mode !== "devnet" || status.authenticated) return null;
   return (
     <section className="relative overflow-hidden rounded-2xl border border-primary/25 bg-card/70 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl md:p-8">
@@ -60,7 +60,7 @@ export function WalletAuthGate({ status, error }: { status: AuthStatus; error?: 
             ShadowDesk uses the HackCanton wallet to authorize dashboard reads. Your tokens stay on the server, and the browser receives only a protected session reference.
           </p>
           {error && <p role="alert" className="mt-4 max-w-xl border-l-2 border-amber-300/70 pl-3 text-sm leading-6 text-amber-200">{errorMessage(error)}</p>}
-          <a href="/api/auth/login" className={`${actionClass} mt-6`}>
+          <a href={`/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`} className={`${actionClass} mt-6`}>
             <WalletCards className="size-4" />
             Connect Canton wallet
             <ArrowRight className="size-4" />
