@@ -11,11 +11,15 @@
  *
  *   - BlockTradeRFQ.CloseRfq                (controller buyer, archives the RFQ)
  *   - QuoteProposal.WithdrawProposal        (controller dealer, archives the quote)
- *   - ApprovedMandate.Archive               (implicit choice, signatories: buyer)
+ *   - ApprovedMandate.Archive               (implicit choice, signatories: buyer+risk officer)
+ *   - SealedQuote.Archive                   (implicit choice, signatories: buyer+dealer)
+ *   - Settlement:Deal.Archive               (implicit choice, signatories: buyer+dealer)
+ *   - SettlementReceipt.Archive             (implicit choice, signatories: buyer)
  *
- * The current round (the RFQ with the furthest expiry, plus the mandate with
- * the furthest expiry that backs it) is deliberately kept. Assets, holdings,
- * sealed quotes, deals and receipts are left alone.
+ * The current round (the RFQ with the furthest expiry, the mandate backing
+ * it, and the newest sealed quote / deal / receipt of each type) is
+ * deliberately kept. Assets, holdings and the single most recent
+ * sealed quote / deal / receipt are left alone.
  *
  * Run through the credential loader:
  *   scripts/env/with-devnet-auth.sh npm run prune:stale
@@ -89,15 +93,47 @@ const main = async (): Promise<void> => {
     .filter((c) => c.templateId.endsWith(":ShadowDesk.Rfq:ApprovedMandate"))
     .filter((c, i, arr) => arr.findIndex((x) => x.contractId === c.contractId) === i);
 
+  const sealedQuotes = [...dealerAAll, ...dealerBAll]
+    .filter((c) => c.templateId.endsWith(":ShadowDesk.Rfq:SealedQuote"))
+    .filter((c, i, arr) => arr.findIndex((x) => x.contractId === c.contractId) === i);
+
+  const deals = [...dealerAAll, ...dealerBAll]
+    .filter((c) => c.templateId.endsWith(":ShadowDesk.Settlement:Deal"))
+    .filter((c, i, arr) => arr.findIndex((x) => x.contractId === c.contractId) === i);
+
+  const receipts = [...dealerAAll, ...dealerBAll, ...riskAll]
+    .filter((c) => c.templateId.endsWith(":ShadowDesk.Settlement:SettlementReceipt"))
+    .filter((c, i, arr) => arr.findIndex((x) => x.contractId === c.contractId) === i);
+
   const nowIso = new Date().toISOString();
   const liveRfq = [...rfqs].sort((a, b) => isoExpiry(b).localeCompare(isoExpiry(a)))[0];
 
   const rfqRef = (liveRfq?.createArgument?.reference as string) ?? "unknown";
   console.log(`[prune] current round RFQ: ${rfqRef} (keeping) with ${mandates.length} mandates visible`);
-  console.log(`[prune] rfqs=${rfqs.length} quotes=${quotes.length} mandates=${mandates.length} buyer set is capped; pruning stale refs only`);
+  console.log(`[prune] rfqs=${rfqs.length} quotes=${quotes.length} mandates=${mandates.length} sealed=${sealedQuotes.length} deals=${deals.length} receipts=${receipts.length}`);
 
   const staleRfqs = rfqs.filter((c) => c.contractId !== liveRfq?.contractId);
   const staleQuotes = quotes.filter((c) => isoExpiry(c) < nowIso);
+  const keepByExpiry = (items: any[], n: number): Set<string> =>
+    new Set(
+      [...items]
+        .sort((a, b) => isoExpiry(b).localeCompare(isoExpiry(a)))
+        .slice(0, n)
+        .map((c) => c.contractId),
+    );
+  // Keep the newest sealed quote / deal / receipt of each type so the latest
+  // completed round still appears on the dashboard ledger view. A run produces
+  // exactly one of each per settlement, so keep a generous ceiling and archive
+  // everything older.
+  const keepSealed = keepByExpiry(sealedQuotes, 2);
+  const keepDeals = keepByExpiry(deals, 2);
+  const keepReceipts = keepByExpiry(receipts, 2);
+  const staleSealed = sealedQuotes.filter((c) => !keepSealed.has(c.contractId));
+  const staleDeals = deals.filter((c) => !keepDeals.has(c.contractId));
+  const staleReceipts = receipts.filter((c) => !keepReceipts.has(c.contractId));
+  console.log(
+    `[prune] archiving stale sealed=${staleSealed.length} deals=${staleDeals.length} receipts=${staleReceipts.length}`,
+  );
   // Keep the mandate that backs the live RFQ. If the serialized Optional did
   // not parse to a clean contract id, fall back to keeping the mandate with the
   // furthest expiry (the current round's), and never archive the parsed live
@@ -145,6 +181,32 @@ const main = async (): Promise<void> => {
   for (const mandate of staleMandates) {
     await run(`Archive ${(mandate.createArgument?.reference as string) ?? mandate.contractId.slice(0, 24)}`, () =>
       client.exerciseRaw(mandate.templateId, mandate.contractId, "Archive", {}, [buyer, riskOfficer], {}, `prune-m-${mandate.contractId.slice(-8)}`),
+    );
+  }
+
+  const dealerOf = (contract: any): string => {
+    const d = contract.createArgument?.dealer as string | undefined;
+    if (!d) return dealerA;
+    return d === dealerB ? dealerB : dealerA;
+  };
+
+  for (const quote of staleSealed) {
+    const dealer = dealerOf(quote);
+    await run(`Archive sealed quote ${quote.contractId.slice(0, 24)}`, () =>
+      client.exerciseRaw(quote.templateId, quote.contractId, "Archive", {}, [buyer, dealer], {}, `prune-sq-${quote.contractId.slice(-8)}`),
+    );
+  }
+
+  for (const deal of staleDeals) {
+    const dealer = dealerOf(deal);
+    await run(`Archive deal ${deal.contractId.slice(0, 24)}`, () =>
+      client.exerciseRaw(deal.templateId, deal.contractId, "Archive", {}, [buyer, dealer], {}, `prune-d-${deal.contractId.slice(-8)}`),
+    );
+  }
+
+  for (const receipt of staleReceipts) {
+    await run(`Archive receipt ${receipt.contractId.slice(0, 24)}`, () =>
+      client.exerciseRaw(receipt.templateId, receipt.contractId, "Archive", {}, [buyer], {}, `prune-r-${receipt.contractId.slice(-8)}`),
     );
   }
 
