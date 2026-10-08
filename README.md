@@ -94,7 +94,7 @@ The public view after the round completed:
 
 Full recorded walkthrough:
 
-[Demo walkthrough video](./docs/demo-walkthrough/demo-walkthrough.mp4)
+[Demo walkthrough video](https://youtu.be/xdd0VtBYofo)
 
 ## The One Rule
 
