@@ -48,7 +48,10 @@ const WILDCARD_TO_TEMPLATES = [
   ":Utility.Registry.V0.Holding.Allocation:DvpLegAllocation",
 ];
 
-const narrowWildcardFilters = (body: Record<string, unknown>): Record<string, unknown> | undefined => {
+const narrowWildcardFilters = (
+  body: Record<string, unknown>,
+  templates: readonly string[] = WILDCARD_TO_TEMPLATES,
+): Record<string, unknown> | undefined => {
   const eventFormat = body.eventFormat as any;
   const filtersByParty = eventFormat?.filtersByParty;
   if (!filtersByParty) return undefined;
@@ -57,7 +60,7 @@ const narrowWildcardFilters = (body: Record<string, unknown>): Record<string, un
   const rebuilt: Record<string, unknown> = {};
   for (const party of parties) {
     rebuilt[party] = {
-      cumulative: WILDCARD_TO_TEMPLATES.map((template) => ({
+      cumulative: templates.map((template) => ({
         templateFilter: { value: { templateId: template } },
       })),
     };
@@ -212,13 +215,18 @@ export class CantonClient {
     // plus `verbose` is the older request shape and is accepted without error
     // while being ignored, which returns contracts with no interface views and
     // makes every interface query look like an empty result.
+    const fallbackTemplates = interfaceId.includes(":Allocation")
+      ? [":Utility.Registry.V0.Holding.Allocation:DvpLegAllocation"]
+      : interfaceId.includes(":Holding")
+        ? [":Utility.Registry.Holding.V0.Holding:Holding"]
+        : WILDCARD_TO_TEMPLATES;
     const entries = await this.queryActiveContractsPaged({
       activeAtOffset,
       eventFormat: {
         filtersByParty: { [party]: { cumulative: [interfaceFilter] } },
         verbose: true,
       },
-    });
+    }, fallbackTemplates);
     const out: InterfaceCreatedEvent[] = [];
     for (const entry of entries) {
       const created = entry?.contractEntry?.JsActiveContract?.createdEvent;
@@ -245,7 +253,10 @@ export class CantonClient {
    * what makes a query's result depend on the party rather than on how much
    * history has accumulated.
    */
-  private async queryActiveContractsPaged(body: Record<string, unknown>): Promise<any[]> {
+  private async queryActiveContractsPaged(
+    body: Record<string, unknown>,
+    fallbackTemplates: readonly string[] = WILDCARD_TO_TEMPLATES,
+  ): Promise<any[]> {
     const out: any[] = [];
     let pageToken: string | undefined;
     // Once a wildcard has been narrowed to templates, a further 413 means the
@@ -278,7 +289,7 @@ export class CantonClient {
           if (!filtersByParty) throw e;
           const perTemplate: any[] = [];
           for (const party of Object.keys(filtersByParty)) {
-            for (const template of WILDCARD_TO_TEMPLATES) {
+            for (const template of fallbackTemplates) {
               const fragment = {
                 ...body,
                 eventFormat: {
@@ -302,7 +313,7 @@ export class CantonClient {
           }
           return perTemplate;
         }
-        const narrowed = narrowWildcardFilters(body);
+        const narrowed = narrowWildcardFilters(body, fallbackTemplates);
         if (!narrowed) throw e;
         body = narrowed;
         pageToken = undefined;
@@ -520,13 +531,15 @@ export class CantonClient {
         filtersByParty,
         verbose: false,
       },
-    });
+    }, templateSuffixes);
     const out: CreatedEvent[] = [];
     for (const entry of entries) {
       const ce = entry.contractEntry;
       if (!ce || !ce.JsActiveContract || !ce.JsActiveContract.createdEvent) continue;
       const created = ce.JsActiveContract.createdEvent;
-      const matches = templateSuffixes.some((s) => created.templateId.endsWith(`:${s}`));
+      const matches = templateSuffixes.some((s) =>
+        created.templateId.endsWith(`:${s.startsWith(":") ? s.slice(1) : s}`),
+      );
       if (!matches) continue;
       out.push({
         offset: created.offset,

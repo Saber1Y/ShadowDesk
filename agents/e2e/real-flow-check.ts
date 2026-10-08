@@ -10,7 +10,6 @@ import {
   parseTokenAmount,
   createDvpLegs,
   listHoldings,
-  listAllocationLegs,
 } from "../shared/token-allocation.js";
 
 /**
@@ -205,18 +204,14 @@ const runRound = async (
   const sealedCid: string = sealedEvent.contractId;
   console.log(`  sealed under policy=${SELECTION_POLICY}`);
 
-  await createDvpLegs(client, {
+  const createdLegs = await createDvpLegs(client, {
     executor: buyer,
     settlementRef,
     security: { instrument: delivered, sender: winner.dealer, receiver: buyer, amount: quantity, legId: "security" },
     payment: { instrument: payment, sender: buyer, receiver: winner.dealer, amount: payAmount, legId: "payment" },
   });
   const legs = new Map<string, any>();
-  for (const [party, instrument] of [[winner.dealer, delivered], [buyer, payment]] as const) {
-    for (const leg of await listAllocationLegs(client, party, settlementRef, { registryUrl: instrument.registryUrl })) {
-      legs.set(leg.contractId, leg);
-    }
-  }
+  for (const leg of [createdLegs.securityLeg, createdLegs.paymentLeg]) legs.set(leg.contractId, leg);
   if (legs.size === 0) throw new Error(`no legs resolved for round ${cfg.label}`);
 
   const dealerBefore = await total(winner.dealer);

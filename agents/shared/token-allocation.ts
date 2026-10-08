@@ -1,8 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { CantonError, envValue, type CantonClient } from "./client.js";
 import { CBTC_DEVNET, type TokenInstrument } from "./config.js";
+import type { CreatedEvent } from "./types.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
+
+const isNodeLimitError = (error: unknown): boolean => {
+  const status = (error as any)?.status;
+  const text = String((error as any)?.causeJson?.cause ?? (error as any)?.message ?? error);
+  return status === 413 || /MAXIMUM_LIST_ELEMENTS|number of matching elements|node limit/i.test(text);
+};
 
 /**
  * Token Standard (CIP-56) allocation adapter.
@@ -94,6 +101,7 @@ export const interfacesForInstrument = (
   return resolved.length > 0 ? resolved : [FALLBACK_INTERFACES[kind]];
 };
 
+const HOLDING_TEMPLATE_SUFFIX = ":Utility.Registry.Holding.V0.Holding:Holding";
 const ALLOCATION_TEMPLATE_SUFFIX = ":Utility.Registry.V0.Holding.Allocation:DvpLegAllocation";
 
 /**
@@ -230,7 +238,11 @@ const instrumentMatches = (view: any, instrument: TokenInstrument): boolean => {
 
 /** Read the instrument reference from either field naming. */
 const instrumentRef = (view: any): { id: string; admin: string } | undefined => {
-  const ref = view?.instrumentId ?? view?.instrument;
+  // A holding names it `instrument` at the top level (v1 also calls the issuer
+  // `source`). A transfer offer nests the instrument under `transfer` as
+  // `instrumentId`, so offers are filtered by their own registry too rather
+  // than accepting a cETH offer against the BETH registrar.
+  const ref = view?.instrumentId ?? view?.transfer?.instrumentId ?? view?.instrument ?? view?.transfer?.instrument;
   const id = ref?.id;
   const admin = ref?.admin ?? ref?.source;
   return id && admin ? { id, admin } : undefined;
@@ -333,7 +345,7 @@ export const listHoldings = async (
   }
 
   if (byContract.size === 0) {
-    const raw = await client.queryAllContracts(party, offset);
+    const raw = await client.queryActiveContracts(party, [HOLDING_TEMPLATE_SUFFIX], offset);
     for (const created of raw) {
       if (!created.templateId.endsWith(":Holding")) continue;
       const view = created.createArgument as any;
@@ -537,7 +549,7 @@ export const createAllocationLeg = async (
     allocationFactoryInterface?: string;
     holdingInterface?: string;
   },
-): Promise<string> => {
+): Promise<AllocationLeg> => {
   const holdings = await requireHoldings(
     client,
     request.sender,
@@ -651,7 +663,9 @@ let tx: Awaited<ReturnType<CantonClient["exerciseRaw"]>> | undefined;
       `allocation leg ${request.legId} created no ${ALLOCATION_TEMPLATE_SUFFIX}; ledger created: ${seen.join(", ") || "nothing"}`,
     );
   }
-  return created.contractId;
+  const parsed = parseAllocationLeg(created.contractId, created.templateId, created.createArgument, request.instrument.registryUrl);
+  if (!parsed) throw new Error(`allocation leg ${request.legId} created an unreadable contract`);
+  return parsed;
 };
 
 /**
@@ -721,7 +735,7 @@ export const listAllocationLegs = async (
   // freshly created leg is not reported as missing purely because the node does
   // not publish it under the expected interface name.
   if (legs.size === 0) {
-    for (const created of await client.queryAllContracts(party, offset)) {
+    for (const created of await client.queryActiveContracts(party, [ALLOCATION_TEMPLATE_SUFFIX], offset)) {
       const templateId = String(created.templateId);
       if (!templateId.endsWith(ALLOCATION_TEMPLATE_SUFFIX)) continue;
       record(created.contractId, templateId, created.createArgument);
@@ -905,7 +919,13 @@ export const findAllocationLegsByCid = async (
 export const createDvpLegs = async (
   client: CantonClient,
   request: DvpRequest,
-): Promise<{ securityLegId: string; paymentLegId: string; settlementRef: string }> => {
+): Promise<{
+  securityLegId: string;
+  paymentLegId: string;
+  securityLeg: AllocationLeg;
+  paymentLeg: AllocationLeg;
+  settlementRef: string;
+}> => {
   const now = new Date();
   const requestedAt = request.requestedAt ?? now.toISOString();
   const allocateBefore = new Date(
@@ -915,21 +935,27 @@ export const createDvpLegs = async (
     now.getTime() + (request.settleBeforeHours ?? 48) * 3600 * 1000,
   ).toISOString();
 
-  const securityLegId = await createAllocationLeg(client, request.security, {
+  const securityLeg = await createAllocationLeg(client, request.security, {
     executor: request.executor,
     settlementRef: request.settlementRef,
     requestedAt,
     allocateBefore,
     settleBefore,
   });
-  const paymentLegId = await createAllocationLeg(client, request.payment, {
+  const paymentLeg = await createAllocationLeg(client, request.payment, {
     executor: request.executor,
     settlementRef: request.settlementRef,
     requestedAt,
     allocateBefore,
     settleBefore,
   });
-  return { securityLegId, paymentLegId, settlementRef: request.settlementRef };
+  return {
+    securityLegId: securityLeg.contractId,
+    paymentLegId: paymentLeg.contractId,
+    securityLeg,
+    paymentLeg,
+    settlementRef: request.settlementRef,
+  };
 };
 /**
  * Abandon an allocation whose settlement never happened, releasing the holdings
@@ -1004,7 +1030,15 @@ export const cancelDanglingAllocations = async (
   const seen = new Set<string>();
 
   for (const party of parties) {
-    for (const created of await client.queryAllContracts(party, offset)) {
+    let allocations: CreatedEvent[];
+    try {
+      allocations = await client.queryActiveContracts(party, [ALLOCATION_TEMPLATE_SUFFIX], offset);
+    } catch (error) {
+      if (!isNodeLimitError(error)) throw error;
+      console.warn(`[registry] cannot enumerate historical allocation legs for ${party.slice(0, 12)}; skipping stale cleanup`);
+      continue;
+    }
+    for (const created of allocations) {
       const templateId = String(created.templateId);
       if (!templateId.endsWith(ALLOCATION_TEMPLATE_SUFFIX)) continue;
       if (seen.has(created.contractId)) continue;
