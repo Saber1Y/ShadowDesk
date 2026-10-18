@@ -7,6 +7,11 @@ ShadowDesk is a policy-controlled treasury execution layer on the Canton Network
 
 The single workflow connects the two layers: the Daml contracts bound what an agent may trade, and the Canton Token Standard registry settles the awarded trade.
 
+[![Watch the ShadowDesk intro (30 seconds)](./docs/motion/shadowdesk-intro-poster.png)](./docs/motion/shadowdesk-intro.mp4)
+
+Watch the 30-second intro: [16:9](./docs/motion/shadowdesk-intro.mp4) · [1:1](./docs/motion/shadowdesk-intro-square.mp4) · [9:16](./docs/motion/shadowdesk-intro-vertical.mp4).
+It is rendered from code in [`video/`](./video) with Remotion; the script is in [docs/MOTION-SCRIPT.md](./docs/MOTION-SCRIPT.md).
+
 Live dashboard: https://shadowdesk-inky.vercel.app · Live dashboard (institutional): https://shadowdesk-inky.vercel.app/dashboard · LocalNet: http://localhost:3001 · Canton DevNet (HackCanton-01 participant).
 
 Quickstart · Screenshots · The One Rule · What ShadowDesk Does · Architecture · How ShadowDesk Uses Canton · Honesty Table · Run It Locally · The One-Flow Demo · Configuration · Deploy
