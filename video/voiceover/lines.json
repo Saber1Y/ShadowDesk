@@ -1,0 +1,18 @@
+{
+  "voice": {
+    "name": "The Neighbor",
+    "archetype": "feat_04_the_neighbor",
+    "instruct": "female, young adult, moderate pitch, american accent",
+    "seed": 43
+  },
+  "lines": [
+    { "id": "intro-01", "text": "A fund wants to buy a large block, quietly." },
+    { "id": "intro-02", "text": "First, a risk officer approves a mandate: the dealers, the size, the maximum price." },
+    { "id": "intro-03", "text": "The agent cannot trade past it. The ledger says no." },
+    { "id": "intro-04", "text": "Two dealers quote blind. Neither sees the other's price." },
+    { "id": "intro-05", "text": "The lowest price wins, by a rule anyone can check." },
+    { "id": "intro-06", "text": "Securities and cash move together, in one transaction, or not at all." },
+    { "id": "intro-07", "text": "Every number on screen comes from the ledger." },
+    { "id": "intro-08", "text": "Shadow Desk. Approve. Quote. Award. Settle. Private execution, on Canton." }
+  ]
+}

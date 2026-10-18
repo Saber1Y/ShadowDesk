@@ -1,0 +1,42 @@
+{
+  "intro-01": {
+    "file": "voiceover/intro-01.wav",
+    "seconds": 2.03,
+    "text": "A fund wants to buy a large block, quietly."
+  },
+  "intro-02": {
+    "file": "voiceover/intro-02.wav",
+    "seconds": 4.32,
+    "text": "First, a risk officer approves a mandate: the dealers, the size, the maximum price."
+  },
+  "intro-03": {
+    "file": "voiceover/intro-03.wav",
+    "seconds": 3.25,
+    "text": "The agent cannot trade past it. The ledger says no."
+  },
+  "intro-04": {
+    "file": "voiceover/intro-04.wav",
+    "seconds": 3.16,
+    "text": "Two dealers quote blind. Neither sees the other's price."
+  },
+  "intro-05": {
+    "file": "voiceover/intro-05.wav",
+    "seconds": 2.86,
+    "text": "The lowest price wins, by a rule anyone can check."
+  },
+  "intro-06": {
+    "file": "voiceover/intro-06.wav",
+    "seconds": 3.54,
+    "text": "Securities and cash move together, in one transaction, or not at all."
+  },
+  "intro-07": {
+    "file": "voiceover/intro-07.wav",
+    "seconds": 2.2,
+    "text": "Every number on screen comes from the ledger."
+  },
+  "intro-08": {
+    "file": "voiceover/intro-08.wav",
+    "seconds": 4.37,
+    "text": "Shadow Desk. Approve. Quote. Award. Settle. Private execution, on Canton."
+  }
+}

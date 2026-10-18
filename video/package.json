@@ -1,0 +1,26 @@
+{
+  "name": "shadowdesk-video",
+  "private": true,
+  "type": "module",
+  "description": "ShadowDesk motion intro, rendered from code with Remotion.",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "voiceover": "node voiceover/generate.mjs",
+    "render": "remotion render src/index.ts Intro out/shadowdesk-intro.mp4",
+    "render:square": "remotion render src/index.ts IntroSquare out/shadowdesk-intro-square.mp4",
+    "render:vertical": "remotion render src/index.ts IntroVertical out/shadowdesk-intro-vertical.mp4",
+    "still": "remotion still src/index.ts Intro out/poster.png --frame=920",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.532",
+    "@remotion/google-fonts": "4.0.532",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.532"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.8",
+    "typescript": "5.9.3"
+  }
+}
