@@ -12,7 +12,7 @@ Every policy, privacy and settlement claim in the pilot must be backed by ledger
 
 What exists today, from the hackathon build:
 
-- Daml contracts for the mandate, the RFQ, sealed quotes, the award and atomic settlement, with a ten-scenario suite.
+- Daml contracts for the mandate, the RFQ, sealed quotes, the award and atomic settlement, with an eleven-scenario suite.
 - Buyer and dealer agents, and a dashboard with buyer and public views.
 - A one-command LocalNet reproduction across two participants with synthetic assets.
 - DevNet settlement against fauceted CBTC and BETH through the Canton Token Standard (CIP-0056) registry, on one participant.

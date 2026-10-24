@@ -5,8 +5,8 @@
 ShadowDesk is policy-bound execution for treasury agents on the Canton Network.
 A buyer and a risk officer approve a treasury mandate on the ledger.
 An agent then sources prices from approved dealers through sealed quotes, and the winning trade settles as atomic delivery-versus-payment.
-The mandate's limits are checked by the Daml contracts, not by the agent, for every RFQ opened through the mandate.
-The contracts do not yet force every trade through a mandate; closing that gap is the first item under next steps.
+The mandate's limits are checked by the Daml contracts, not by the agent.
+Every RFQ is co-signed by a risk officer who must be a different party from the buyer, so the agent cannot open an RFQ outside a mandate.
 
 ## The problem
 
@@ -18,8 +18,8 @@ Treasury teams want to hand routine rebalancing to software agents without givin
 
 ## How ShadowDesk addresses it
 
-1. The buyer and the risk officer sign a `TreasuryMandate` that fixes the approved dealers, the asset, the settlement asset, the maximum amount, the maximum price and the expiry.
-2. The agent opens a `BlockTradeRFQ` from the approved mandate through `OpenRfq`, which refuses any request above the amount, maximum price or expiry, or one that invites an unapproved dealer.
+1. The buyer and a separate risk officer sign a `TreasuryMandate` that fixes the approved dealers, the asset, the settlement asset, the maximum amount, the maximum price and the expiry.
+2. The agent opens a `BlockTradeRFQ` from the approved mandate through `OpenRfq`, the only way to create one, which refuses any request above the amount, maximum price or expiry, or one that invites an unapproved dealer.
 3. Each dealer submits a `QuoteProposal` that only that dealer and the buyer can see.
 4. The award follows a fixed rule, `LowestPriceThenBidId`, and sealing consumes the RFQ, so a request is awarded at most once.
 5. `Deal.Settle` checks the award against the mandate again and settles both legs atomically.
@@ -45,20 +45,20 @@ The full claims list, with evidence and limits, is in [CLAIMS.md](CLAIMS.md).
 
 | Pain today | ShadowDesk outcome |
 | --- | --- |
-| Agent limits live in the agent | Limits signed by risk and checked by the ledger for RFQs opened through the mandate |
+| Agent limits live in the agent | Limits signed by risk and checked by the ledger on every RFQ and settlement |
 | Dealers can infer each other's prices | Each quote visible only to its dealer and the buyer |
 | Settlement risk between separate systems | Both legs and the receipt in one transaction |
 | Award decisions are hard to audit | The rule, the winning bid and the mandate link are recorded on the ledger |
 
 ## Where we are today
 
-A hackathon-built proof of concept: Daml contracts with a ten-scenario suite, buyer and dealer agents, a dashboard, a one-command LocalNet reproduction, and DevNet settlement against fauceted test tokens.
+A hackathon-built proof of concept: Daml contracts with an eleven-scenario suite, buyer and dealer agents, a dashboard, a one-command LocalNet reproduction, and DevNet settlement against fauceted test tokens.
 There are no users, customers or pilots yet.
 Known limits are listed in [CLAIMS.md](CLAIMS.md).
 
 ## Next steps
 
-- Make the mandate mandatory in the contracts, so the buyer party cannot open an RFQ outside it.
+- Upload the mandated package to DevNet and run a round on it (see [DEVNET-UPGRADE.md](DEVNET-UPGRADE.md)).
 - Talk to treasury and risk operators to find the first niche where agent execution under a mandate matters most.
 - Run one DevNet round across two participants so privacy and real-token settlement are proven together.
 - Publish DevNet transaction evidence in the repository.
