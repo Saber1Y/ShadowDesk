@@ -379,6 +379,7 @@ export default function Page() {
         onToggle={() => setConsoleOpen((v) => !v)}
         running={running}
         lines={lines}
+        participantCount={participantCount}
       />
     </main>
   );
@@ -428,7 +429,7 @@ function LoadingSkeleton() {
   );
 }
 
-function ConsoleDock({ open, onToggle, running, lines }: { open: boolean; onToggle: () => void; running: boolean; lines: string[] }) {
+function ConsoleDock({ open, onToggle, running, lines, participantCount }: { open: boolean; onToggle: () => void; running: boolean; lines: string[]; participantCount: number }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -450,7 +451,7 @@ function ConsoleDock({ open, onToggle, running, lines }: { open: boolean; onTogg
               <span className="size-2.5 rounded-full bg-yellow-500/80" />
               <span className="size-2.5 rounded-full bg-green-500/80" />
               <Terminal className="ml-2 size-3.5 text-primary" />
-              <span className="font-mono text-[10px] text-muted-foreground">agent_console · two participants</span>
+              <span className="font-mono text-[10px] text-muted-foreground">agent_console · {participantCount} participant{participantCount === 1 ? "" : "s"}</span>
               <button onClick={onToggle} className="ml-auto font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground">
                 {running ? "minimize" : "close"}
               </button>
