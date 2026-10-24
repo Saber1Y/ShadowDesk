@@ -17,13 +17,14 @@ When the limits live in the agent's own code, the party being limited is also th
 
 ShadowDesk moves the limits into Daml contracts that the risk officer signs:
 
-- A `TreasuryMandate`, signed by the buyer and the risk officer, fixes the approved dealers, the asset, the settlement asset, the maximum amount, the maximum price and the expiry.
-- `OpenRfq` refuses any RFQ above those limits or to an unapproved dealer, and `Deal.Settle` checks the mandate again before anything moves.
-- Each dealer's quote is visible only to that dealer and the buyer, and the award follows a fixed rule recorded on the ledger.
+- A `TreasuryMandate`, signed by the buyer and a risk officer who must be a different party, fixes the approved dealers, the asset, the settlement asset, the maximum amount, the maximum price and the expiry.
+- Every RFQ is co-signed by the risk officer, so `OpenRfq` on an approved mandate is the only way to open one. It refuses anything above the limits or to an unapproved dealer, and `Deal.Settle` checks the mandate again before anything moves.
+- A competing dealer never sees another dealer's quote, and the award follows a fixed rule recorded on the ledger.
 - Both settlement legs and the receipt commit in one transaction, or none of them do.
 
-One gap is open: the buyer party can still create an RFQ directly, outside any mandate, and settle it.
-Making the mandate mandatory is the first item on the [roadmap](#tech-stack-credits-roadmap), and [docs/CLAIMS.md](./docs/CLAIMS.md) records the reproduction.
+An earlier version let the buyer party create an RFQ outside any mandate and settle it.
+The contracts now close that, and `runAgentCannotBypassMandate` tries the bypass four ways.
+DevNet still runs the earlier package until the new one is uploaded; [docs/DEVNET-UPGRADE.md](./docs/DEVNET-UPGRADE.md) has the steps.
 
 ## Where each claim is proven
 
@@ -38,7 +39,7 @@ Every claim, its evidence and the wording to use are in [docs/CLAIMS.md](./docs/
 ## Verify in 2 minutes
 
 1. Read the limits in the contract: `OpenRfq` in [daml/src/ShadowDesk/Rfq.daml](./daml/src/ShadowDesk/Rfq.daml) (lines 56-82) and the settlement re-check in [daml/src/ShadowDesk/Settlement.daml](./daml/src/ShadowDesk/Settlement.daml) (lines 22-44).
-2. Read the scenarios that test them in [daml/src/ShadowDesk/Test.daml](./daml/src/ShadowDesk/Test.daml): `runMandatePolicyLifecycle`, `runMaxPriceCannotBeOverridden`, `runMultiParticipantPrivacyAndSettlement`, `runRfqIsAwardedAtMostOnce` and `runDealMustMatchAward`.
+2. Read the scenarios that test them in [daml/src/ShadowDesk/Test.daml](./daml/src/ShadowDesk/Test.daml): `runAgentCannotBypassMandate`, `runMandatePolicyLifecycle`, `runMaxPriceCannotBeOverridden`, `runMultiParticipantPrivacyAndSettlement`, `runRfqIsAwardedAtMostOnce` and `runDealMustMatchAward`.
 3. Run them: `cd daml && dpm test` with Daml SDK 3.5.10 (about a minute after the SDK is installed).
 4. Watch a full recorded round: [docs/demo-walkthrough/demo-walkthrough.mp4](./docs/demo-walkthrough/demo-walkthrough.mp4).
 5. Run the whole round yourself on LocalNet in one command: `./scripts/localnet/run-all.sh`, then open http://localhost:3001.
@@ -153,7 +154,7 @@ Mandate approval
 A buyer and a risk officer approve a `TreasuryMandate` that fixes the dealers, the assets, the amount, the maximum price, and the expiry. Approval is a ledger event with both parties as signatories.
 
 Private RFQ
-The buyer agent opens a `BlockTradeRFQ` from the approved mandate. `OpenRfq` is the mandate's control point: the ledger refuses any request through it that exceeds the cap amount, price or expiry, or invites an unapproved dealer. The contracts do not yet force every RFQ through `OpenRfq`; the buyer party can still create one directly (see the Honesty Table).
+The buyer agent opens a `BlockTradeRFQ` from the approved mandate. `OpenRfq` is the mandate's control point: the ledger refuses any request that exceeds the cap amount, price or expiry, or invites an unapproved dealer. Every RFQ is co-signed by the risk officer, so the agent cannot create one any other way.
 
 Sealed quoting
 Each dealer agent submits one `QuoteProposal`, signatory to that dealer alone and observed only by the buyer. A competing dealer never sees another dealer's price - that is a Daml stakeholder property, not a UI filter.
@@ -171,7 +172,7 @@ The dashboard rebuilds state from ledger and registry queries, and the durable w
 
 Two decisions drive this architecture.
 
-The first is that policy lives in the Daml contracts, not in the agents. Cap enforcement (`OpenRfq`), award determinism (`LowestPriceThenBidId`), and atomic settlement (`Deal.Settle`) are ledger behavior, so an agent working through a mandate cannot exceed it, re-award, or partially settle on its own. Forcing every RFQ through a mandate is still open (see the Honesty Table).
+The first is that policy lives in the Daml contracts, not in the agents. Cap enforcement (`OpenRfq`), award determinism (`LowestPriceThenBidId`), and atomic settlement (`Deal.Settle`) are ledger behavior, so no agent can exceed the mandate, re-award, or partially settle on its own.
 
 The second is that settlement spans two packages in one update. The ShadowDesk receipt and the registry legs commit atomically, so the receipt is proof the tokens moved and the tokens only move with a receipt.
 
@@ -192,7 +193,7 @@ Contracts | `daml/src/ShadowDesk/Asset.daml` | `Asset` holdings used as settleme
 Contracts | `daml/src/ShadowDesk/Rfq.daml` | `TreasuryMandate`, `ApprovedMandate` and the mandate lifecycle (approve, enforce caps).
 Contracts | `daml/src/ShadowDesk/Rfq.daml` | `OpenRfq`, `QuoteProposal`, `LowestPriceThenBidId`, seal - the RFQ lifecycle.
 Contracts | `daml/src/ShadowDesk/Settlement.daml` | `Deal`, `Settle`, `SettlementReceipt` - atomic DvP.
-Contracts | `daml/src/ShadowDesk/Test.daml` | The ten scenario suite: policy lifecycle, private RFQ, cap override, authz + replay, quote validation, atomic DvP, invalid leaves, multi-participant privacy, deal-must-match-award, at-most-once award.
+Contracts | `daml/src/ShadowDesk/Test.daml` | The eleven scenario suite: policy lifecycle, private RFQ, cap override, authz + replay, quote validation, atomic DvP, invalid leaves, multi-participant privacy, deal-must-match-award, at-most-once award, and the mandate bypass attempts.
 Agent | `agents/shared/client.ts` | JSON Ledger API v2 client, `submitMany`, party-authenticated calls.
 Agent | `agents/shared/config.ts` | Network, parties, instruments, caps from environment.
 Agent | `agents/buyer/buyer.ts` | Opens RFQs, ranks sealed quotes, seals, drives settlement.
@@ -216,7 +217,7 @@ Frontend | `frontend/lib/session-cookie.ts` | Signed session cookie for replay a
 
 Claim | How it is enforced
 --- | ---
-Mandates cap what an agent may trade through them | `OpenRfq` rejects any RFQ past the mandate amount, max price or expiry, or to an unapproved dealer; covered by `runMaxPriceCannotBeOverridden` and asserted live by `e2e:real-guard`. An RFQ created directly by the buyer, outside a mandate, is not capped yet.
+Mandates cap what an agent may trade | Every RFQ is co-signed by a distinct risk officer, so it can only come from `OpenRfq`, which rejects anything past the mandate amount, max price or expiry, or to an unapproved dealer; settlement re-checks the mandate. Covered by `runAgentCannotBypassMandate` and `runMaxPriceCannotBeOverridden`, and asserted live by `e2e:real-guard`.
 Quotes stay private | `QuoteProposal` is signatory to one dealer, observed by the buyer; a rival dealer's `all()` returns empty.
 One RFQ, at most one award | Sealing consumes the RFQ; `runRfqIsAwardedAtMostOnce`.
 Award matches the deal | Deal authorization requires the sealed quote; `runDealMustMatchAward`.
@@ -236,7 +237,7 @@ Reads:
 - Party-authenticated contract queries (buyer sees its RFQs and sealed quotes; a dealer sees only its own quotes).
 - Token Standard registry state through the Digital Asset utilities endpoint (`SHADOWDESK_REGISTRY_URL`).
 
-Contract: `shadowdesk-treasury` 1.0.0 (package id `50a21ee1…` on Daml SDK 3.5.10), deployed to the HackCanton DevNet participant and to the LocalNet sandbox.
+Contract: `shadowdesk-treasury-mandated` 1.0.0 (package id `941cafd1…` on Daml SDK 3.5.10). LocalNet deploys it on every run. The HackCanton DevNet participant still runs the earlier `shadowdesk-treasury` 1.0.0 (package id `50a21ee1…`) until the upgrade in [docs/DEVNET-UPGRADE.md](./docs/DEVNET-UPGRADE.md) is done.
 
 There is no custody at the app layer. The agent only submits transactions as its party; it never holds keys for anyone else. On DevNet the settlement tokens (CBTC, BETH) come from the BitSafe faucet, which mints them for the configured settlement parties. The utility registry tracks the allocations; the ledger holds the authored contracts.
 
@@ -246,7 +247,7 @@ Privacy is a protocol primitive, not an app layer.
 On a public chain, a "private" RFQ usually means the app hides data that the platform still sees. On Canton, visibility is decided by Daml stakeholders, so a dealer's quote literally does not exist for a rival dealer. That claim is asserted in `runMultiParticipantPrivacyAndSettlement` and in the live e2e check, which prints the losing dealer's empty view.
 
 Policy in the contract, not the agent.
-If the cap lived in the agent, a buggy or malicious agent could trade more than approved. `OpenRfq` and `Deal` enforce the mandate and the award in the ledger, so the ceiling holds for every RFQ opened through the mandate. Today `BlockTradeRFQ` is signed by the buyer alone and its mandate link is optional, so the buyer party can create an RFQ outside the mandate; making the risk officer a signatory of every RFQ closes that gap and is the next contract change.
+If the cap lived in the agent, a buggy or malicious agent could trade more than approved. `OpenRfq` and `Deal` enforce the mandate and the award in the ledger. The risk officer co-signs every `BlockTradeRFQ`, so the buyer party cannot create one on its own, and a mandate whose risk officer is the buyer is refused. Settlement fetches the mandate again, so even an award the buyer and a dealer sign between themselves cannot settle outside it. The earlier package signed RFQs with the buyer alone and made the mandate optional, which let the buyer settle outside it.
 
 One atomic update spans two packages.
 The most fraudulent settlement would have the receipt exist while the tokens did not move. By committing `Deal.Settle` and both registry legs as one `submitMany`, the receipt is unilaterally tied to the transfers. If any leg fails, all fail.
@@ -263,7 +264,7 @@ Capability | Status
 --- | ---
 Mandate lifecycle (approve, caps, expiry) | Real - scenario suite + live DevNet/LocalNet rounds.
 Cap enforcement on `OpenRfq` | Real - `runMaxPriceCannotBeOverridden` + `e2e:real-guard` rejects an over-cap RFQ.
-Every trade forced through a mandate | Not enforced - `BlockTradeRFQ` is signed by the buyer alone with an optional mandate, so the buyer party can create and settle an RFQ outside any mandate. Reproduced 2026-10-24: a scenario settled 5,000,000 at 149.0 against a mandate of 1,000,000 at 101.0.
+Every trade forced through a mandate | Real on LocalNet and in the scenario suite - `runAgentCannotBypassMandate`. DevNet runs the earlier package, which let the buyer settle 5,000,000 at 149.0 against a mandate of 1,000,000 at 101.0, until the upgrade in `docs/DEVNET-UPGRADE.md` is uploaded.
 Private sealed quotes | Real - `QuoteProposal` signatory to one dealer; rival `all()` empty.
 Deterministic award | Real - `LowestPriceThenBidId`, seal consumes the RFQ.
 Atomic DvP in one update | Real - DevNet 2026-10-08: `Deal.Settle` + both registry legs in one `submitMany`, receipt hash recorded.
@@ -279,7 +280,7 @@ The most honest limit is environment topology. Privacy across a participant boun
 
 Check | Command | Covers
 --- | --- | ---
-Daml scenario suite | `dpm test` (in `daml/`) | The ten scenarios + `noop` on a clean sandbox.
+Daml scenario suite | `dpm test` (in `daml/`) | The eleven scenarios + `noop` on a clean sandbox.
 Agent typecheck | `npm run typecheck` (in `agents/`) | TypeScript across buyer, dealer, shared, e2e, demo.
 Agent live guard checks | `npm run e2e:real-guard` | Rejection paths against a running local ledger.
 Agent live happy path | `npm run e2e:real-flow` | Full round incl. losing-dealer privacy assertion.
@@ -304,7 +305,7 @@ Node.js 20+, the `dpm` CLI, and the Daml SDK 3.5.10. On macOS, ensure `~/.dpm/bi
 ./scripts/localnet/run-all.sh
 ```
 
-This boots a clean sandbox, deploys `shadowdesk-treasury`, provisions the two LocalNet participants, runs the agent round against synthetic assets, and serves the dashboard on http://localhost:3001.
+This boots a clean sandbox, deploys `shadowdesk-treasury-mandated`, provisions the two LocalNet participants, runs the agent round against synthetic assets, and serves the dashboard on http://localhost:3001.
 
 3. Manual LocalNet
 
@@ -394,7 +395,7 @@ To update a deployed worker: sync the agents and worker to the VPS, restart the 
 ShadowDesk/
 ├─ daml/                         Daml contracts + scenario suite
 │  ├─ src/ShadowDesk/            Asset (mandate), Rfq, Settlement, Test
-│  └─ daml.yaml                  shadowdesk-treasury 1.0.0, SDK 3.5.10
+│  └─ daml.yaml                  shadowdesk-treasury-mandated 1.0.0, SDK 3.5.10
 ├─ agents/                       Canton agents
 │  ├─ buyer/  dealer/            Role agents (RFQ, quotes, seal, settle)
 │  ├─ shared/                    client, config, faucet, settlement, real-dvp
@@ -425,7 +426,7 @@ Built on the Canton Network DevNet (HackCanton-01), with fauceted tokens from Bi
 
 Roadmap
 
-- Make the mandate mandatory: add the risk officer as a signatory of `BlockTradeRFQ` and make its mandate link required, so the buyer party cannot open an RFQ outside a mandate.
+- Upload `shadowdesk-treasury-mandated` to DevNet and run a round on it ([docs/DEVNET-UPGRADE.md](./docs/DEVNET-UPGRADE.md)).
 - Deploy the V2 registry-native settlement package once DevNet uploads are enabled (today the V1 settle path runs on DevNet).
 - Run a DevNet round across a real participant boundary so cross-participant privacy and real registry tokens appear in one run.
 - Add a third dealer, RFQ amendment, and cumulative mandate-spend enforcement.
