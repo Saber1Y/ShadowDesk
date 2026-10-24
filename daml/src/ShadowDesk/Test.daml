@@ -11,9 +11,10 @@ expectSome label o = case o of
   None -> error label
   Some x -> x
 
-rfqTemplate : Party -> [Party] -> Time -> Text -> BlockTradeRFQ
-rfqTemplate buyer dealers expiry reference = BlockTradeRFQ with
+rfqTemplate : Party -> Party -> [Party] -> Time -> Text -> ContractId ApprovedMandate -> BlockTradeRFQ
+rfqTemplate buyer riskOfficer dealers expiry reference mandateCid = BlockTradeRFQ with
   buyer = buyer
+  riskOfficer = riskOfficer
   dealers = dealers
   assetToBuy = "cTBILL"
   settlementAsset = "cUSDC"
@@ -22,7 +23,7 @@ rfqTemplate buyer dealers expiry reference = BlockTradeRFQ with
   selectionPolicy = LowestPriceThenBidId
   reference = reference
   expiry = expiry
-  mandate = None
+  mandate = mandateCid
 
 createApprovedMandate : Party -> Party -> [Party] -> Time -> Script (ContractId ApprovedMandate)
 createApprovedMandate buyer riskOfficer dealers expiry = do
@@ -39,6 +40,20 @@ createApprovedMandate buyer riskOfficer dealers expiry = do
       expiry = expiry)
   submit (actAs [buyer, riskOfficer]) do
     exerciseCmd mandateCid Approve
+
+-- Opens an RFQ the only way the contracts allow: through OpenRfq on a mandate
+-- that the buyer and the risk officer approved for exactly these dealers.
+openRfq : Party -> Party -> [Party] -> Time -> Text -> Script (ContractId BlockTradeRFQ)
+openRfq buyer riskOfficer dealers rfqExpiry reference = do
+  now <- getTime
+  mandateCid <- createApprovedMandate buyer riskOfficer dealers (addRelTime now (hours 48))
+  submit buyer do
+    exerciseCmd mandateCid OpenRfq with
+      dealers = dealers
+      amount = 1_000_000.0
+      maxPrice = 101.0
+      reference = reference
+      expiry = rfqExpiry
 
 runMandatePolicyLifecycle : Script ()
 runMandatePolicyLifecycle = do
@@ -78,13 +93,14 @@ runMandatePolicyLifecycle = do
 
   sealed <- queryContractId buyer sealedCid
   let awarded = expectSome "Mandated award must exist" sealed
-  assertMsg "Mandated award carries the approved policy link" (awarded.mandate /= None)
+  assertMsg "Mandated award carries the approved policy link" (awarded.mandate == mandateCid)
   assertMsg "Mandated award carries the approved amount" (awarded.amount == 1_000_000.0)
   assertMsg "Mandated award carries the approved price cap" (awarded.maxPrice == 101.0)
 
 runPrivateRfqLifecycle : Script ()
 runPrivateRfqLifecycle = do
   buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
   dealerA <- allocateParty "dealerA"
   dealerB <- allocateParty "dealerB"
   dealerC <- allocateParty "dealerC"
@@ -92,8 +108,7 @@ runPrivateRfqLifecycle = do
   now <- getTime
   let expiry = addRelTime now (hours 24)
 
-  rfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA, dealerB] expiry "RFQ-0001")
+  rfqCid <- openRfq buyer riskOfficer [dealerA, dealerB] expiry "RFQ-0001"
 
   rfqDealerA <- query @BlockTradeRFQ dealerA
   assertMsg "Invited dealer A must see the RFQ" (length rfqDealerA == 1)
@@ -158,13 +173,13 @@ runPrivateRfqLifecycle = do
 runMaxPriceCannotBeOverridden : Script ()
 runMaxPriceCannotBeOverridden = do
   buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
   dealer <- allocateParty "dealerA"
 
   now <- getTime
   let expiry = addRelTime now (hours 24)
 
-  rfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealer] expiry "RFQ-MAX-PRICE")
+  rfqCid <- openRfq buyer riskOfficer [dealer] expiry "RFQ-MAX-PRICE"
 
   proposalCid <- submit dealer do
     exerciseCmd rfqCid SubmitQuoteProposal with
@@ -186,6 +201,7 @@ runMaxPriceCannotBeOverridden = do
 runAuthorizationAndReplayBoundaries : Script ()
 runAuthorizationAndReplayBoundaries = do
   buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
   dealerA <- allocateParty "dealerA"
   dealerB <- allocateParty "dealerB"
   dealerC <- allocateParty "dealerC"
@@ -194,8 +210,7 @@ runAuthorizationAndReplayBoundaries = do
   let expiry = addRelTime now (hours 24)
   let expired = addRelTime now (hours (-24))
 
-  expiredRfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA, dealerB] expired "RFQ-EXPIRED")
+  expiredRfqCid <- openRfq buyer riskOfficer [dealerA, dealerB] expired "RFQ-EXPIRED"
 
   submitMustFail dealerA do
     exerciseCmd expiredRfqCid SubmitQuoteProposal with
@@ -203,8 +218,7 @@ runAuthorizationAndReplayBoundaries = do
       offeredPrice = 100.00
       bidId = "BID-A-EXPIRED"
 
-  liveRfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA, dealerB] expiry "RFQ-0002")
+  liveRfqCid <- openRfq buyer riskOfficer [dealerA, dealerB] expiry "RFQ-0002"
 
   submitMustFail dealerC do
     exerciseCmd liveRfqCid SubmitQuoteProposal with
@@ -236,13 +250,13 @@ runAuthorizationAndReplayBoundaries = do
 runQuoteConstraintValidation : Script ()
 runQuoteConstraintValidation = do
   buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
   dealerA <- allocateParty "dealerA"
 
   now <- getTime
   let expiry = addRelTime now (hours 24)
 
-  rfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA] expiry "RFQ-0003")
+  rfqCid <- openRfq buyer riskOfficer [dealerA] expiry "RFQ-0003"
 
   proposalACid <- submit dealerA do
     exerciseCmd rfqCid SubmitQuoteProposal with
@@ -257,6 +271,7 @@ runQuoteConstraintValidation = do
 runAtomicDvPSettlement : Script ()
 runAtomicDvPSettlement = do
   buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
   dealerA <- allocateParty "dealerA"
 
   now <- getTime
@@ -278,8 +293,7 @@ runAtomicDvPSettlement = do
       quantity = 1_000_000.0
       reference = "SEED-DEALER")
 
-  rfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA] expiry "RFQ-SETTLE")
+  rfqCid <- openRfq buyer riskOfficer [dealerA] expiry "RFQ-SETTLE"
 
   proposalCid <- submit dealerA do
     exerciseCmd rfqCid SubmitQuoteProposal with
@@ -334,6 +348,7 @@ runAtomicDvPSettlement = do
 runDvPRejectsInvalidLeaves : Script ()
 runDvPRejectsInvalidLeaves = do
   buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
   dealerA <- allocateParty "dealerA"
 
   now <- getTime
@@ -369,8 +384,7 @@ runDvPRejectsInvalidLeaves = do
       quantity = 999_999.0
       reference = "SEED-DEALER-EVEN-SMALLER")
 
-  rfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA] expiry "RFQ-BADLEAVES")
+  rfqCid <- openRfq buyer riskOfficer [dealerA] expiry "RFQ-BADLEAVES"
 
   proposalCid <- submit dealerA do
     exerciseCmd rfqCid SubmitQuoteProposal with
@@ -419,6 +433,7 @@ runDvPRejectsInvalidLeaves = do
 runMultiParticipantPrivacyAndSettlement : Script ()
 runMultiParticipantPrivacyAndSettlement = do
   buyer <- allocatePartyOn "buyer" (ParticipantName "participant1")
+  riskOfficer <- allocatePartyOn "riskOfficer" (ParticipantName "participant1")
   dealerA <- allocatePartyOn "dealerA" (ParticipantName "participant1")
   dealerB <- allocatePartyOn "dealerB" (ParticipantName "participant2")
 
@@ -441,8 +456,7 @@ runMultiParticipantPrivacyAndSettlement = do
       quantity = 1_000_000.0
       reference = "SEED-DEALER-P1")
 
-  rfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA, dealerB] expiry "RFQ-MULTI")
+  rfqCid <- openRfq buyer riskOfficer [dealerA, dealerB] expiry "RFQ-MULTI"
 
   proposalACid <- submit dealerA do
     exerciseCmd rfqCid SubmitQuoteProposal with
@@ -507,6 +521,7 @@ runMultiParticipantPrivacyAndSettlement = do
 runDealMustMatchAward : Script ()
 runDealMustMatchAward = do
   buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
   dealerA <- allocateParty "dealerA"
   dealerB <- allocateParty "dealerB"
 
@@ -529,8 +544,7 @@ runDealMustMatchAward = do
       quantity = 1_000_000.0
       reference = "SEED-DEALER")
 
-  rfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA] expiry "RFQ-AWARDMATCH")
+  rfqCid <- openRfq buyer riskOfficer [dealerA] expiry "RFQ-AWARDMATCH"
 
   proposalCid <- submit dealerA do
     exerciseCmd rfqCid SubmitQuoteProposal with
@@ -602,14 +616,14 @@ runDealMustMatchAward = do
 runRfqIsAwardedAtMostOnce : Script ()
 runRfqIsAwardedAtMostOnce = do
   buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
   dealerA <- allocateParty "dealerA"
   dealerB <- allocateParty "dealerB"
 
   now <- getTime
   let expiry = addRelTime now (hours 24)
 
-  rfqCid <- submit buyer do
-    createCmd (rfqTemplate buyer [dealerA, dealerB] expiry "RFQ-SINGLEAWARD")
+  rfqCid <- openRfq buyer riskOfficer [dealerA, dealerB] expiry "RFQ-SINGLEAWARD"
 
   proposalACid <- submit dealerA do
     exerciseCmd rfqCid SubmitQuoteProposal with
@@ -662,6 +676,99 @@ runRfqIsAwardedAtMostOnce = do
     [(_, onlyAward)] ->
       assertMsg "The single award is the winning bid" (onlyAward.bidId == "BID-SA-B")
     _ -> error "Exactly one award must exist for the RFQ"
+
+-- The agent acts as the buyer. However it tries, it must not be able to trade
+-- outside a mandate that a distinct risk officer approved.
+runAgentCannotBypassMandate : Script ()
+runAgentCannotBypassMandate = do
+  buyer <- allocateParty "buyer"
+  riskOfficer <- allocateParty "riskOfficer"
+  dealerA <- allocateParty "dealerA"
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+  let cusdc = AssetId with issuer = "ShadowDesk"; symbol = "cUSDC"
+  let ctbill = AssetId with issuer = "ShadowDesk"; symbol = "cTBILL"
+
+  -- The mandate allows 1,000,000 cTBILL at up to 101.0 from dealer A.
+  mandateCid <- createApprovedMandate buyer riskOfficer [dealerA] expiry
+
+  -- 1. The buyer alone cannot create an RFQ, even one naming the real mandate.
+  submitMustFail buyer do
+    createCmd ((rfqTemplate buyer riskOfficer [dealerA] expiry "RFQ-BYPASS" mandateCid) with
+      amount = 5_000_000.0
+      maxPrice = 150.0)
+
+  -- 2. Nor by naming itself as the risk officer.
+  submitMustFail buyer do
+    createCmd ((rfqTemplate buyer buyer [dealerA] expiry "RFQ-SELF" mandateCid) with
+      amount = 5_000_000.0
+      maxPrice = 150.0)
+
+  -- 3. Nor can it approve its own mandate by naming itself as the risk officer.
+  submitMustFail buyer do
+    createCmd (TreasuryMandate with
+      buyer = buyer
+      riskOfficer = buyer
+      approvedDealers = [dealerA]
+      assetToBuy = "cTBILL"
+      settlementAsset = "cUSDC"
+      maxAmount = 5_000_000.0
+      maxPrice = 150.0
+      reference = "MANDATE-SELF"
+      expiry = expiry)
+
+  -- 4. Even if the buyer and a dealer sign an award between themselves, the
+  -- mandate it names is re-checked at settlement and the assets do not move.
+  cashCid <- submit buyer do
+    createCmd (Asset with holder = buyer; id = cusdc; quantity = 1_000_000_000.0; reference = "SEED-BUYER")
+  bondCid <- submit dealerA do
+    createCmd (Asset with holder = dealerA; id = ctbill; quantity = 5_000_000.0; reference = "SEED-DEALER")
+  realRfqCid <- submit buyer do
+    exerciseCmd mandateCid OpenRfq with
+      dealers = [dealerA]
+      amount = 1_000_000.0
+      maxPrice = 101.0
+      reference = "RFQ-REAL"
+      expiry = expiry
+  forgedAwardCid <- submit (actAs [buyer, dealerA]) do
+    createCmd (SealedQuote with
+      rfq = realRfqCid
+      rfqReference = "RFQ-FORGED"
+      maxPrice = 150.0
+      invitedDealers = [dealerA]
+      buyer = buyer
+      dealer = dealerA
+      assetToBuy = "cTBILL"
+      settlementAsset = "cUSDC"
+      amount = 5_000_000.0
+      offeredPrice = 149.0
+      bidId = "BID-FORGED"
+      selectionPolicy = LowestPriceThenBidId
+      expiry = expiry
+      mandate = mandateCid)
+  forgedDealCid <- submit (actAs [buyer, dealerA]) do
+    createCmd (Deal with
+      reference = "DEAL-FORGED"
+      buyer = buyer
+      dealer = dealerA
+      security = ctbill
+      quantity = 5_000_000.0
+      unitPrice = 149.0
+      settlementAsset = cusdc
+      paymentCid = cashCid
+      securityCid = bondCid
+      sealedQuote = forgedAwardCid
+      expiry = expiry)
+  submitMustFail (actAs [buyer, dealerA]) do
+    exerciseCmd forgedDealCid Settle
+
+  survivingCash <- queryContractId buyer cashCid
+  survivingBond <- queryContractId dealerA bondCid
+  assertMsg "Payment asset survives the bypass attempt" (survivingCash /= None)
+  assertMsg "Security asset survives the bypass attempt" (survivingBond /= None)
+  receipts <- query @SettlementReceipt buyer
+  assertMsg "No settlement receipt exists after the bypass attempts" (length receipts == 0)
 
 noop : Script ()
 noop = pure ()
