@@ -1,5 +1,10 @@
-export const PACKAGE_NAME = "shadowdesk-treasury";
-export const PACKAGE_ID = "50a21ee1be71aeae5c56c90db20491dd870004f1cd4fb47efcf7d3aa292d7c22";
+/**
+ * Renamed from shadowdesk-treasury when the risk officer became a signatory of
+ * every RFQ: a changed template is not a valid upgrade, so the ledger needs a
+ * new package name rather than a new version of the old one.
+ */
+export const PACKAGE_NAME = "shadowdesk-treasury-mandated";
+export const PACKAGE_ID = "941cafd1e1db2b1fdf52d2a3235f74113a56e8bad1297c9db18ff140991239eb";
 
 export type Party = string;
 
@@ -28,6 +33,7 @@ export interface AssetId {
 
 export interface BlockTradeRFQ {
   buyer: Party;
+  riskOfficer: Party;
   dealers: Party[];
   assetToBuy: string;
   settlementAsset: string;
@@ -36,7 +42,7 @@ export interface BlockTradeRFQ {
   selectionPolicy: SelectionPolicy;
   reference: string;
   expiry: string;
-  mandate: string | null;
+  mandate: string;
 }
 
 export interface QuoteProposal {
@@ -65,6 +71,7 @@ export interface SealedQuote {
   bidId: string;
   selectionPolicy: SelectionPolicy;
   expiry: string;
+  mandate: string;
 }
 
 export interface Asset {
@@ -100,7 +107,7 @@ export interface SettlementReceipt {
   sealedQuote: string;
   bidId: string;
   selectionPolicy: SelectionPolicy;
-  mandate: string | null;
+  mandate: string;
   settledAt: string;
 }
 
@@ -124,7 +131,7 @@ export type TemplateKey = keyof typeof TPL;
  */
 export const PACKAGE_NAME_V2 = "shadowdesk-treasury-v2";
 export const PACKAGE_ID_V2 =
-  "9e41d0b5b46ea3b63775e6e6c9f9dde5b4ce08a5280f9e721c6dd093a427a5fd";
+  "560545603918a939b9bc232d6931bef4a518d7c696775aef0a95292388e67199";
 
 export const TPL_V2 = {
   TreasuryMandate: `#${PACKAGE_NAME_V2}:ShadowDesk.V2.Rfq:TreasuryMandate`,
@@ -197,7 +204,7 @@ export interface SettlementReceiptV2 {
   sealedQuote: string;
   bidId: string;
   selectionPolicy: SelectionPolicy;
-  mandate: string | null;
+  mandate: string;
   settledAt: string;
 }
 

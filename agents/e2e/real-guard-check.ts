@@ -91,8 +91,7 @@ const main = async (): Promise<void> => {
     assetToBuy: instrument,
     settlementAsset: instrument,
   };
-  const spec = defaultRfq(1, [dealerParty], overrides);
-  spec.mandate = { riskOfficer, maxAmount: mandateMax };
+  const spec = defaultRfq(1, [dealerParty], { riskOfficer, maxAmount: mandateMax }, overrides);
   // The mandate's real control point is OpenRfq, which refuses an envelope the
   // mandate cannot cover. That guard is reachable on its own, unlike the
   // settlement-time mandate check, so it is asserted before anything is quoted.

@@ -44,6 +44,7 @@ const main = async (): Promise<void> => {
 
   const buyer = required("SHADOWDESK_BUYER_PARTY");
   const dealer = required("SHADOWDESK_DEALER_A_PARTY");
+  const riskOfficer = required("SHADOWDESK_RISK_OFFICER_PARTY");
 
   // Which instrument the dealer delivers only selects the direction of the
   // trade; the settlement itself is symmetric in both legs.
@@ -66,6 +67,7 @@ const main = async (): Promise<void> => {
     client,
     buyer,
     dealer,
+    riskOfficer,
     security,
     payment,
     unitPriceScaled,

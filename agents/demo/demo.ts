@@ -65,11 +65,15 @@ const main = async () => {
     }),
   );
 
-  const spec = defaultRfq(dealers.length, dealers.map((d) => d.dealerParty!), overrides);
-  spec.mandate = {
-    riskOfficer: riskOfficerParty,
-    maxAmount: numberFromEnv("SHADOWDESK_MANDATE_MAX_AMOUNT") ?? spec.amount,
-  };
+  const spec = defaultRfq(
+    dealers.length,
+    dealers.map((d) => d.dealerParty!),
+    {
+      riskOfficer: riskOfficerParty,
+      maxAmount: numberFromEnv("SHADOWDESK_MANDATE_MAX_AMOUNT") ?? overrides.amount ?? 1_000_000,
+    },
+    overrides,
+  );
   const cashCid = await buyer.ensureCash(settlementAsset, Math.ceil(spec.amount * spec.maxPrice * 2));
   console.log(`[buyer] cash=${cashCid.slice(0, 16)}...`);
 

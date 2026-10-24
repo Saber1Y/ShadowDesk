@@ -12,7 +12,7 @@ export interface RfqSpec {
   maxPrice: number;
   dealers: string[];
   expiry: string;
-  mandate?: MandateSpec;
+  mandate: MandateSpec;
 }
 
 export interface MandateSpec {
@@ -27,7 +27,12 @@ export interface RfqOverrides {
   settlementAsset?: AssetIdSpec;
 }
 
-export const defaultRfq = (dealerCount: number, dealerParties: string[], overrides: RfqOverrides = {}): RfqSpec => {
+export const defaultRfq = (
+  dealerCount: number,
+  dealerParties: string[],
+  mandate: MandateSpec,
+  overrides: RfqOverrides = {},
+): RfqSpec => {
   const expiry = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
   return {
     reference: `RFQ-DEMO-${Date.now()}`,
@@ -37,6 +42,7 @@ export const defaultRfq = (dealerCount: number, dealerParties: string[], overrid
     maxPrice: overrides.maxPrice ?? 101.0,
     dealers: dealerParties,
     expiry,
+    mandate,
   };
 };
 
@@ -107,36 +113,22 @@ export class BuyerAgent {
     throw new Error("cash asset create produced no contract");
   }
 
+  /**
+   * Opens an RFQ the only way the contracts allow: a treasury mandate signed by
+   * the buyer and a distinct risk officer, approved, then OpenRfq on it.
+   */
   async createRfq(spec: RfqSpec): Promise<string> {
     if (!this.buyerParty) throw new Error("provision() first");
-    if (spec.mandate) return this.createMandatedRfq(spec);
-    const tx = await this.client.create(
-      "BlockTradeRFQ",
-      {
-        buyer: this.buyerParty,
-        dealers: spec.dealers,
-        assetToBuy: spec.assetToBuy.symbol,
-        settlementAsset: spec.settlementAsset.symbol,
-        amount: String(spec.amount),
-        maxPrice: String(spec.maxPrice),
-        selectionPolicy: SELECTION_POLICY,
-        reference: spec.reference,
-        expiry: spec.expiry,
-      },
-      [this.buyerParty],
-      `cmd-create-rfq-${spec.reference}`,
-    );
-    for (const e of tx.transaction.events) {
-      const created = (e as any).CreatedEvent;
-      if (created && created.templateId.endsWith(":ShadowDesk.Rfq:BlockTradeRFQ")) return created.contractId;
+    if (spec.mandate.riskOfficer === this.buyerParty) {
+      throw new Error("the risk officer must be a different party from the buyer");
     }
-    throw new Error("RFQ create produced no contract");
+    return this.createMandatedRfq(spec);
   }
 
   private async createMandatedRfq(spec: RfqSpec): Promise<string> {
     const buyer = this.buyerParty;
     if (!buyer) throw new Error("provision() first");
-    const mandate = spec.mandate!;
+    const mandate = spec.mandate;
     const mandateTx = await this.client.create(
       "TreasuryMandate",
       {

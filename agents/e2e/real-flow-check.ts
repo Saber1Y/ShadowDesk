@@ -153,8 +153,7 @@ const runRound = async (
     assetToBuy: delivered,
     settlementAsset: payment,
   };
-  const spec = defaultRfq(2, [dealerA, dealerB], overrides);
-  spec.mandate = { riskOfficer, maxAmount: Number(securityUnits) };
+  const spec = defaultRfq(2, [dealerA, dealerB], { riskOfficer, maxAmount: Number(securityUnits) }, overrides);
 
   console.log(`\n--- round ${cfg.label}: ${securityUnits} ${delivered.id} for ${payAmount} ${payment.id} @ <=${unitPrice}`);
   const rfqCid = await buyerAgent.createRfq(spec);

@@ -20,6 +20,8 @@ const main = async (): Promise<void> => {
   const client = new CantonClient(baseUrl, "participant1", "shadowdesk-agent");
   await assertPackageUploaded(client);
   const dealerParty = `${buyerParty}`;
+  // The mandate needs a risk officer distinct from the buyer; the contracts refuse a self-approved one.
+  const riskOfficerParty = await buyer.client.ensureParty("riskOfficer");
 
   const now = Date.now();
   const expiry = new Date(now + 24 * 3600 * 1000).toISOString();
@@ -58,7 +60,7 @@ const main = async (): Promise<void> => {
     .filter(Boolean)
     .find((e: any) => e.templateId.endsWith(":ShadowDesk.Asset:Asset"))!.contractId;
 
-  const spec = defaultRfq(1, [dealerParty], { amount, maxPrice: 101 });
+  const spec = defaultRfq(1, [dealerParty], { riskOfficer: riskOfficerParty, maxAmount: amount }, { amount, maxPrice: 101 });
   spec.reference = `RFQ-E2E-${now}`;
   spec.expiry = expiry;
   const rfqCid = await buyer.createRfq(spec);

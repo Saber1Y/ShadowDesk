@@ -110,8 +110,8 @@ export interface RealDvPOptions {
   dealer: Party;
   /** Who signs the settlement update. Defaults to the buyer. */
   executor?: Party;
-  /** Who approves the treasury mandate. Defaults to the buyer. */
-  riskOfficer?: Party;
+  /** Who approves the treasury mandate. Must be a different party from the buyer. */
+  riskOfficer: Party;
   /** The instrument the dealer delivers. */
   security: TokenInstrument;
   /** The instrument the buyer delivers. */
@@ -199,7 +199,8 @@ export const settleRealDvP = async (options: RealDvPOptions): Promise<RealDvPRes
     maxSecurityBaseUnits,
   } = options;
   const executor = options.executor ?? buyer;
-  const riskOfficer = options.riskOfficer ?? buyer;
+  const riskOfficer = options.riskOfficer;
+  if (riskOfficer === buyer) throw new Error("the risk officer must be a different party from the buyer");
   const log = options.log ?? ((line: string) => console.log(line));
 
   const suffix = reference.replace(/[^A-Za-z0-9]+/g, "-");
