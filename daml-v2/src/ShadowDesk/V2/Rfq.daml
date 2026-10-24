@@ -26,6 +26,7 @@ template TreasuryMandate
     expiry : Time
   where
     signatory buyer, riskOfficer
+    ensure buyer /= riskOfficer
 
     choice Approve : ContractId ApprovedMandate
       controller buyer, riskOfficer
@@ -65,6 +66,7 @@ template ApprovedMandate
     approvedAt : Time
   where
     signatory buyer, riskOfficer
+    ensure buyer /= riskOfficer
 
     nonconsuming choice OpenRfq : ContractId BlockTradeRFQ
       with
@@ -84,6 +86,7 @@ template ApprovedMandate
         assertMsg "RFQ must invite at least one dealer" (dealers /= [])
         create BlockTradeRFQ with
           buyer = this.buyer
+          riskOfficer = this.riskOfficer
           dealers = dealers
           securityInstrument = this.securityInstrument
           settlementInstrument = this.settlementInstrument
@@ -92,11 +95,15 @@ template ApprovedMandate
           selectionPolicy = LowestPriceThenBidId
           reference = reference
           expiry = expiry
-          mandate = Some self
+          mandate = self
 
+-- Every RFQ is signed by the risk officer as well as the buyer, so the only way
+-- to create one is OpenRfq on an approved mandate, where both have signed. The
+-- buyer party, which the agent acts as, cannot open an RFQ outside a mandate.
 template BlockTradeRFQ
   with
     buyer : Party
+    riskOfficer : Party
     dealers : [Party]
     securityInstrument : InstrumentId
     settlementInstrument : InstrumentId
@@ -105,10 +112,11 @@ template BlockTradeRFQ
     selectionPolicy : SelectionPolicy
     reference : Text
     expiry : Time
-    mandate : Optional (ContractId ApprovedMandate)
+    mandate : ContractId ApprovedMandate
   where
-    signatory buyer
+    signatory buyer, riskOfficer
     observer dealers
+    ensure buyer /= riskOfficer
 
     nonconsuming choice SubmitQuoteProposal : ContractId QuoteProposal
       with
@@ -138,6 +146,12 @@ template BlockTradeRFQ
       do
         archive self
 
+    -- Consumed by AcceptProposal, so a request can be awarded at most once.
+    choice ConsumeForAward : BlockTradeRFQ
+      controller buyer
+      do
+        pure this
+
 template QuoteProposal
   with
     rfq : ContractId BlockTradeRFQ
@@ -159,7 +173,9 @@ template QuoteProposal
       controller buyer
       do
         currentTime <- getTime
-        rfqRef <- fetch this.rfq
+        -- Consume the request so it can be awarded exactly once. A second
+        -- acceptance, or a concurrent one, can no longer exercise the RFQ.
+        rfqRef <- exercise this.rfq ConsumeForAward
         assertMsg "RFQ has expired" (currentTime < rfqRef.expiry)
         assertMsg "Quote proposal has expired" (currentTime < this.expiry)
         assertMsg "RFQ buyer mismatch" (rfqRef.buyer == buyer)
@@ -167,21 +183,15 @@ template QuoteProposal
         assertMsg "Offered price exceeds buyer max price" (this.offeredPrice <= rfqRef.maxPrice)
         assertMsg "Quoted security instrument must match the RFQ" (this.securityInstrument == rfqRef.securityInstrument)
         assertMsg "Quoted settlement instrument must match the RFQ" (this.settlementInstrument == rfqRef.settlementInstrument)
-        case rfqRef.mandate of
-          None -> pure ()
-          Some mandateCid -> do
-            mandate <- fetch mandateCid
-            assertMsg "Award buyer does not match the approved mandate" (rfqRef.buyer == mandate.buyer)
-            assertMsg "Award security instrument exceeds the approved mandate"
-              (rfqRef.securityInstrument == mandate.securityInstrument)
-            assertMsg "Award settlement instrument exceeds the approved mandate"
-              (rfqRef.settlementInstrument == mandate.settlementInstrument)
-            assertMsg "Award amount exceeds the approved treasury mandate" (rfqRef.amount <= mandate.maxAmount)
-            assertMsg "Award price exceeds the approved treasury mandate" (this.offeredPrice <= mandate.maxPrice)
-            assertMsg "Award expiry exceeds the approved treasury mandate" (rfqRef.expiry <= mandate.expiry)
-        -- Consume the request so it can be awarded exactly once. A second
-        -- acceptance, or a concurrent one, can no longer fetch the RFQ.
-        archive this.rfq
+        mandate <- fetch rfqRef.mandate
+        assertMsg "Award buyer does not match the approved mandate" (rfqRef.buyer == mandate.buyer)
+        assertMsg "Award security instrument exceeds the approved mandate"
+          (rfqRef.securityInstrument == mandate.securityInstrument)
+        assertMsg "Award settlement instrument exceeds the approved mandate"
+          (rfqRef.settlementInstrument == mandate.settlementInstrument)
+        assertMsg "Award amount exceeds the approved treasury mandate" (rfqRef.amount <= mandate.maxAmount)
+        assertMsg "Award price exceeds the approved treasury mandate" (this.offeredPrice <= mandate.maxPrice)
+        assertMsg "Award expiry exceeds the approved treasury mandate" (rfqRef.expiry <= mandate.expiry)
         create SealedQuote with
           rfq = this.rfq
           rfqReference = rfqRef.reference
@@ -218,6 +228,6 @@ template SealedQuote
     bidId : Text
     selectionPolicy : SelectionPolicy
     expiry : Time
-    mandate : Optional (ContractId ApprovedMandate)
+    mandate : ContractId ApprovedMandate
   where
     signatory buyer, dealer

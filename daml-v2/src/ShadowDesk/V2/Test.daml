@@ -209,5 +209,90 @@ test = do
     rePricedSealed expiry
   recordMustFail buyer dealer rePricedPlan
 
+-- The agent acts as the buyer. However it tries, it must not be able to trade
+-- outside a mandate that a distinct risk officer approved.
+runAgentCannotBypassMandate : Script ()
+runAgentCannotBypassMandate = do
+  buyer <- allocateParty "buyer"
+  dealer <- allocateParty "dealer"
+  riskOfficer <- allocateParty "riskOfficer"
+  cbtcAdmin <- allocateParty "cbtc-network"
+  bethAdmin <- allocateParty "beth-network"
+  let cbtc = InstrumentId with
+        id = "CBTC"
+        admin = cbtcAdmin
+  let beth = InstrumentId with
+        id = "BETH"
+        admin = bethAdmin
+
+  now <- getTime
+  let expiry = addRelTime now (hours 24)
+
+  -- The mandate allows 1,000,000 at up to 101.0 from this dealer.
+  mandateCid <- approve buyer riskOfficer [dealer] cbtc beth 1_000_000.0 101.0 expiry
+  let oversized = BlockTradeRFQ with
+        buyer = buyer
+        riskOfficer = riskOfficer
+        dealers = [dealer]
+        securityInstrument = cbtc
+        settlementInstrument = beth
+        amount = 5_000_000.0
+        maxPrice = 150.0
+        selectionPolicy = LowestPriceThenBidId
+        reference = "RFQ-BYPASS"
+        expiry = expiry
+        mandate = mandateCid
+
+  -- 1. The buyer alone cannot create an RFQ, even one naming the real mandate.
+  submitMustFail buyer $ createCmd oversized
+
+  -- 2. Nor by naming itself as the risk officer.
+  submitMustFail buyer $ createCmd (oversized with riskOfficer = buyer)
+
+  -- 3. Nor can it approve its own mandate by naming itself as the risk officer.
+  submitMustFail buyer $ createCmd $ TreasuryMandate with
+    buyer = buyer
+    riskOfficer = buyer
+    approvedDealers = [dealer]
+    securityInstrument = cbtc
+    settlementInstrument = beth
+    maxAmount = 5_000_000.0
+    maxPrice = 150.0
+    reference = "MANDATE-SELF"
+    expiry = expiry
+
+  -- 4. Even if the buyer and the dealer sign an award between themselves, the
+  -- mandate it names is re-checked when the settlement is recorded.
+  realRfqCid <- submit buyer $ exerciseCmd mandateCid OpenRfq with
+    dealers = [dealer]
+    amount = 1_000_000.0
+    maxPrice = 101.0
+    reference = "RFQ-REAL"
+    expiry = expiry
+  forgedAwardCid <- submit (actAs [buyer, dealer]) $ createCmd $ SealedQuote with
+    rfq = realRfqCid
+    rfqReference = "RFQ-FORGED"
+    maxPrice = 150.0
+    invitedDealers = [dealer]
+    buyer = buyer
+    dealer = dealer
+    securityInstrument = cbtc
+    settlementInstrument = beth
+    amount = 5_000_000.0
+    offeredPrice = 149.0
+    bidId = "BID-FORGED"
+    selectionPolicy = LowestPriceThenBidId
+    expiry = expiry
+    mandate = mandateCid
+  forgedPlan <- plan
+    buyer dealer buyer cbtc beth 5_000_000.0 149.0
+    (leg SecurityLeg "ALLOC-FORGED-SEC" cbtc dealer buyer 5_000_000.0)
+    (leg PaymentLeg "ALLOC-FORGED-PAY" beth buyer dealer (5_000_000.0 * 149.0))
+    forgedAwardCid expiry
+  recordMustFail buyer dealer forgedPlan
+
+  receipts <- query @SettlementReceipt buyer
+  assertMsg "No settlement receipt exists after the bypass attempts" (length receipts == 0)
+
 noop : Script ()
 noop = pure ()

@@ -80,18 +80,19 @@ template SettlementPlan
         assertMsg "Settlement settlement instrument must match the awarded quote"
           (award.settlementInstrument == this.settlementInstrument)
 
-        case award.mandate of
-          None -> pure ()
-          Some mandateCid -> do
-            mandate <- fetch mandateCid
-            assertMsg "Settlement amount exceeds the approved treasury mandate"
-              (this.quantity <= mandate.maxAmount)
-            assertMsg "Settlement price exceeds the approved treasury mandate"
-              (this.unitPrice <= mandate.maxPrice)
-            assertMsg "Settlement security instrument exceeds the approved treasury mandate"
-              (this.securityInstrument == mandate.securityInstrument)
-            assertMsg "Settlement settlement instrument exceeds the approved treasury mandate"
-              (this.settlementInstrument == mandate.settlementInstrument)
+        -- The mandate is re-checked here as well, so even a buyer and dealer who
+        -- sign an award between themselves cannot settle outside it.
+        mandate <- fetch award.mandate
+        assertMsg "Settlement buyer does not match the approved treasury mandate" (mandate.buyer == this.buyer)
+        assertMsg "Settlement dealer is not approved by the treasury mandate" (this.dealer `elem` mandate.approvedDealers)
+        assertMsg "Settlement amount exceeds the approved treasury mandate"
+          (this.quantity <= mandate.maxAmount)
+        assertMsg "Settlement price exceeds the approved treasury mandate"
+          (this.unitPrice <= mandate.maxPrice)
+        assertMsg "Settlement security instrument exceeds the approved treasury mandate"
+          (this.securityInstrument == mandate.securityInstrument)
+        assertMsg "Settlement settlement instrument exceeds the approved treasury mandate"
+          (this.settlementInstrument == mandate.settlementInstrument)
 
         -- The security leg delivers the traded instrument to the buyer and the
         -- payment leg delivers the settlement instrument to the dealer.
@@ -157,7 +158,7 @@ template SettlementReceipt
     sealedQuote : ContractId SealedQuote
     bidId : Text
     selectionPolicy : SelectionPolicy
-    mandate : Optional (ContractId ApprovedMandate)
+    mandate : ContractId ApprovedMandate
     settledAt : Time
   where
     signatory buyer
