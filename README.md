@@ -1,44 +1,76 @@
 # ShadowDesk
-License: MIT Policy-Controlled Treasury Execution on Canton
+
+**Policy-bound execution for treasury agents on Canton.**
+A risk officer approves a mandate on the ledger, an agent prices a block trade through sealed dealer quotes, and the winning trade settles as atomic delivery-versus-payment.
 
 Approve. Quote. Award. Settle.
-
-ShadowDesk is a policy-controlled treasury execution layer on the Canton Network. It binds agent discretion to an approved mandate, prices a block trade through private sealed RFQs, and settles the winning trade against real token holdings atomically.
-
-The single workflow connects the two layers: the Daml contracts bound what an agent may trade, and the Canton Token Standard registry settles the awarded trade.
 
 [![Watch the ShadowDesk intro (30 seconds)](./docs/motion/shadowdesk-intro-poster.png)](./docs/motion/shadowdesk-intro.mp4)
 
 Watch the 30-second intro: [16:9](./docs/motion/shadowdesk-intro.mp4) · [1:1](./docs/motion/shadowdesk-intro-square.mp4) · [9:16](./docs/motion/shadowdesk-intro-vertical.mp4).
 It is rendered from code in [`video/`](./video) with Remotion; the script is in [docs/MOTION-SCRIPT.md](./docs/MOTION-SCRIPT.md).
 
-Live dashboard: https://shadowdesk-inky.vercel.app · Live dashboard (institutional): https://shadowdesk-inky.vercel.app/dashboard · LocalNet: http://localhost:3001 · Canton DevNet (HackCanton-01 participant).
+## Why it exists
 
-Quickstart · Screenshots · The One Rule · What ShadowDesk Does · Architecture · How ShadowDesk Uses Canton · Honesty Table · Run It Locally · The One-Flow Demo · Configuration · Deploy
+Treasury teams want software agents to execute routine rebalancing, but an agent that holds trading authority can trade too much, at a bad price, or with a counterparty nobody approved.
+When the limits live in the agent's own code, the party being limited is also the party enforcing the limit.
 
-This project was built for the Canton Network track of HackCanton Season 3. It is a proof of concept, not a production service.
+ShadowDesk moves the limits into Daml contracts that the risk officer signs:
 
-Nothing here is financial advice, an investment product, or a custodial service. DevNet settlement uses fauceted test tokens (CBTC, BETH) minted by the BitSafe faucet, and LocalNet runs synthetic assets. No real money moves.
+- A `TreasuryMandate`, signed by the buyer and the risk officer, fixes the approved dealers, the asset, the settlement asset, the maximum amount, the maximum price and the expiry.
+- `OpenRfq` refuses any RFQ above those limits or to an unapproved dealer, and `Deal.Settle` checks the mandate again before anything moves.
+- Each dealer's quote is visible only to that dealer and the buyer, and the award follows a fixed rule recorded on the ledger.
+- Both settlement legs and the receipt commit in one transaction, or none of them do.
 
-Table of Contents
-Quickstart
-Screenshots
-The One Rule
-What ShadowDesk Does
-Architecture
-Component by Component
-Safety, Enforced in Code
-How ShadowDesk Uses Canton
-Engineering Decisions and the Hard Problems
-What Is Real vs Pending - The Honesty Table
-Validation
-Run It Locally
-The One-Flow Demo
-Configuration
-Deploy
-Project Layout
-Tech Stack, Credits, Roadmap
-Disclaimer and License
+One gap is open: the buyer party can still create an RFQ directly, outside any mandate, and settle it.
+Making the mandate mandatory is the first item on the [roadmap](#tech-stack-credits-roadmap), and [docs/CLAIMS.md](./docs/CLAIMS.md) records the reproduction.
+
+## Where each claim is proven
+
+| Environment | Topology | Assets | What it proves |
+| --- | --- | --- | --- |
+| LocalNet | Two participants, one synchronizer | Synthetic | The full round, every rejection path, and that a losing dealer on a separate participant sees none of the winner's quotes |
+| Canton DevNet (HackCanton-01) | One participant hosting all four parties | Fauceted CBTC and BETH through the Canton Token Standard registry | `Deal.Settle` and both registry legs in one `submitMany` transaction |
+
+No single run proves cross-participant privacy and real-token settlement together.
+Every claim, its evidence and the wording to use are in [docs/CLAIMS.md](./docs/CLAIMS.md); the README, the deck and the video follow it.
+
+## Verify in 2 minutes
+
+1. Read the limits in the contract: `OpenRfq` in [daml/src/ShadowDesk/Rfq.daml](./daml/src/ShadowDesk/Rfq.daml) (lines 56-82) and the settlement re-check in [daml/src/ShadowDesk/Settlement.daml](./daml/src/ShadowDesk/Settlement.daml) (lines 22-44).
+2. Read the scenarios that test them in [daml/src/ShadowDesk/Test.daml](./daml/src/ShadowDesk/Test.daml): `runMandatePolicyLifecycle`, `runMaxPriceCannotBeOverridden`, `runMultiParticipantPrivacyAndSettlement`, `runRfqIsAwardedAtMostOnce` and `runDealMustMatchAward`.
+3. Run them: `cd daml && dpm test` with Daml SDK 3.5.10 (about a minute after the SDK is installed).
+4. Watch a full recorded round: [docs/demo-walkthrough/demo-walkthrough.mp4](./docs/demo-walkthrough/demo-walkthrough.mp4).
+5. Run the whole round yourself on LocalNet in one command: `./scripts/localnet/run-all.sh`, then open http://localhost:3001.
+
+The live dashboard at https://shadowdesk-inky.vercel.app/dashboard reads the DevNet participant and needs a HackCanton participant login to show ledger data.
+DevNet transaction ids from the settlement run are not yet published in this repository.
+
+This project was built for the Canton Network track of HackCanton Season 3.
+It is a proof of concept, not a production service, and it has no users or pilots yet.
+Nothing here is financial advice, an investment product, or a custodial service.
+DevNet settlement uses fauceted test tokens (CBTC, BETH) minted by the BitSafe faucet, and LocalNet runs synthetic assets; no real money moves.
+
+## Table of Contents
+
+- [Quickstart](#quickstart)
+- [Screenshots](#screenshots)
+- [The One Rule](#the-one-rule)
+- [What ShadowDesk Does](#what-shadowdesk-does)
+- [Architecture](#architecture)
+- [Component by Component](#component-by-component)
+- [Safety, Enforced in Code](#safety-enforced-in-code)
+- [How ShadowDesk Uses Canton](#how-shadowdesk-uses-canton)
+- [Engineering Decisions and the Hard Problems](#engineering-decisions-and-the-hard-problems)
+- [What Is Real vs Pending - The Honesty Table](#what-is-real-vs-pending---the-honesty-table)
+- [Validation](#validation)
+- [Run It Locally](#run-it-locally)
+- [The One-Flow Demo](#the-one-flow-demo)
+- [Configuration](#configuration)
+- [Deploy](#deploy)
+- [Project Layout](#project-layout)
+- [Tech Stack, Credits, Roadmap](#tech-stack-credits-roadmap)
+- [Disclaimer and License](#disclaimer-and-license)
 
 ## Quickstart
 
@@ -69,7 +101,7 @@ The dashboard empty state:
 
 ![Shadow desk landing](./docs/demo-walkthrough/1-public-hero.png)
 
-Public culture view of the run:
+The public metadata view of a run:
 
 ![Public fabric terminal](./docs/demo-walkthrough/2-public-fabric-terminal.png)
 
@@ -121,7 +153,7 @@ Mandate approval
 A buyer and a risk officer approve a `TreasuryMandate` that fixes the dealers, the assets, the amount, the maximum price, and the expiry. Approval is a ledger event with both parties as signatories.
 
 Private RFQ
-The buyer agent opens a `BlockTradeRFQ` from the approved mandate. `OpenRfq` is the mandate's real control point: the ledger refuses any request that exceeds the cap amount or price. The agent cannot open more than the mandate allows.
+The buyer agent opens a `BlockTradeRFQ` from the approved mandate. `OpenRfq` is the mandate's control point: the ledger refuses any request through it that exceeds the cap amount, price or expiry, or invites an unapproved dealer. The contracts do not yet force every RFQ through `OpenRfq`; the buyer party can still create one directly (see the Honesty Table).
 
 Sealed quoting
 Each dealer agent submits one `QuoteProposal`, signatory to that dealer alone and observed only by the buyer. A competing dealer never sees another dealer's price - that is a Daml stakeholder property, not a UI filter.
@@ -139,13 +171,13 @@ The dashboard rebuilds state from ledger and registry queries, and the durable w
 
 Two decisions drive this architecture.
 
-The first is that policy lives in the Daml contracts, not in the agents. Cap enforcement (`OpenRfq`), award determinism (`LowestPriceThenBidId`), and atomic settlement (`Deal.Settle`) are ledger behavior, so no agent can exceed, re-award, or partially settle on its own.
+The first is that policy lives in the Daml contracts, not in the agents. Cap enforcement (`OpenRfq`), award determinism (`LowestPriceThenBidId`), and atomic settlement (`Deal.Settle`) are ledger behavior, so an agent working through a mandate cannot exceed it, re-award, or partially settle on its own. Forcing every RFQ through a mandate is still open (see the Honesty Table).
 
 The second is that settlement spans two packages in one update. The ShadowDesk receipt and the registry legs commit atomically, so the receipt is proof the tokens moved and the tokens only move with a receipt.
 
 Phase | What happens | Where
 --- | --- | ---
-Approve | Buyer + risk officer approve a `TreasuryMandate` (dealers, assets, amount, max price, expiry). | `daml/src/ShadowDesk/Asset.daml`
+Approve | Buyer + risk officer approve a `TreasuryMandate` (dealers, assets, amount, max price, expiry). | `daml/src/ShadowDesk/Rfq.daml`
 Open | Buyer opens a `BlockTradeRFQ`; `OpenRfq` refuses anything past the cap. | `daml/src/ShadowDesk/Rfq.daml`
 Quote | Dealers submit sealed `QuoteProposal`s, signatory to one dealer, observed by the buyer. | `daml/src/ShadowDesk/Rfq.daml`, `agents/dealer/dealer.ts`
 Award | Buyer runs `LowestPriceThenBidId` and seals; sealing consumes the RFQ. | `daml/src/ShadowDesk/Rfq.daml`, `agents/buyer/buyer.ts`
@@ -156,7 +188,8 @@ Verify | Dashboard re-derives state from ledger + registry; losing-dealer zero-v
 
 Layer | Module | Responsibility
 --- | --- | ---
-Contracts | `daml/src/ShadowDesk/Asset.daml` | `TreasuryMandate` and mandate lifecycle (approve, enforce caps).
+Contracts | `daml/src/ShadowDesk/Asset.daml` | `Asset` holdings used as settlement legs on LocalNet.
+Contracts | `daml/src/ShadowDesk/Rfq.daml` | `TreasuryMandate`, `ApprovedMandate` and the mandate lifecycle (approve, enforce caps).
 Contracts | `daml/src/ShadowDesk/Rfq.daml` | `OpenRfq`, `QuoteProposal`, `LowestPriceThenBidId`, seal - the RFQ lifecycle.
 Contracts | `daml/src/ShadowDesk/Settlement.daml` | `Deal`, `Settle`, `SettlementReceipt` - atomic DvP.
 Contracts | `daml/src/ShadowDesk/Test.daml` | The ten scenario suite: policy lifecycle, private RFQ, cap override, authz + replay, quote validation, atomic DvP, invalid leaves, multi-participant privacy, deal-must-match-award, at-most-once award.
@@ -183,7 +216,7 @@ Frontend | `frontend/lib/session-cookie.ts` | Signed session cookie for replay a
 
 Claim | How it is enforced
 --- | ---
-Mandates cap what an agent may trade | `OpenRfq` rejects any RFQ past the mandate amount or max price; covered by `runMaxPriceCannotBeOverridden` and asserted live by `e2e:real-guard`.
+Mandates cap what an agent may trade through them | `OpenRfq` rejects any RFQ past the mandate amount, max price or expiry, or to an unapproved dealer; covered by `runMaxPriceCannotBeOverridden` and asserted live by `e2e:real-guard`. An RFQ created directly by the buyer, outside a mandate, is not capped yet.
 Quotes stay private | `QuoteProposal` is signatory to one dealer, observed by the buyer; a rival dealer's `all()` returns empty.
 One RFQ, at most one award | Sealing consumes the RFQ; `runRfqIsAwardedAtMostOnce`.
 Award matches the deal | Deal authorization requires the sealed quote; `runDealMustMatchAward`.
@@ -213,7 +246,7 @@ Privacy is a protocol primitive, not an app layer.
 On a public chain, a "private" RFQ usually means the app hides data that the platform still sees. On Canton, visibility is decided by Daml stakeholders, so a dealer's quote literally does not exist for a rival dealer. That claim is asserted in `runMultiParticipantPrivacyAndSettlement` and in the live e2e check, which prints the losing dealer's empty view.
 
 Policy in the contract, not the agent.
-If the cap lived in the agent, a buggy or malicious agent could trade more than approved. `OpenRfq` and `Deal` enforce the mandate and the award in the ledger, so the ceiling holds even when the agent is wrong.
+If the cap lived in the agent, a buggy or malicious agent could trade more than approved. `OpenRfq` and `Deal` enforce the mandate and the award in the ledger, so the ceiling holds for every RFQ opened through the mandate. Today `BlockTradeRFQ` is signed by the buyer alone and its mandate link is optional, so the buyer party can create an RFQ outside the mandate; making the risk officer a signatory of every RFQ closes that gap and is the next contract change.
 
 One atomic update spans two packages.
 The most fraudulent settlement would have the receipt exist while the tokens did not move. By committing `Deal.Settle` and both registry legs as one `submitMany`, the receipt is unilaterally tied to the transfers. If any leg fails, all fail.
@@ -230,13 +263,14 @@ Capability | Status
 --- | ---
 Mandate lifecycle (approve, caps, expiry) | Real - scenario suite + live DevNet/LocalNet rounds.
 Cap enforcement on `OpenRfq` | Real - `runMaxPriceCannotBeOverridden` + `e2e:real-guard` rejects an over-cap RFQ.
+Every trade forced through a mandate | Not enforced - `BlockTradeRFQ` is signed by the buyer alone with an optional mandate, so the buyer party can create and settle an RFQ outside any mandate. Reproduced 2026-10-24: a scenario settled 5,000,000 at 149.0 against a mandate of 1,000,000 at 101.0.
 Private sealed quotes | Real - `QuoteProposal` signatory to one dealer; rival `all()` empty.
 Deterministic award | Real - `LowestPriceThenBidId`, seal consumes the RFQ.
 Atomic DvP in one update | Real - DevNet 2026-10-08: `Deal.Settle` + both registry legs in one `submitMany`, receipt hash recorded.
 Cross-participant privacy proof | LocalNet only - two participants on LocalNet; the DevNet run uses one participant, so the privacy assertion runs against the LocalNet boundary.
 V2 registry-native receipt | LocalNet only - compiles and validates locally, but upload to the DevNet participant returns 403 (uploads need operator credentials), so DevNet settles via the V1 path.
 Best-execution enforced on-ledger | Not enforced - recorded and evidenced from the bid set; the runner asserts the ranking, the ledger does not force it.
-Third dealer / RFQ amendment / cumulative mandate spend | Roadmap - documented as next steps, not shipped.
+Third dealer / RFQ amendment / cumulative mandate spend | Roadmap - documented as next steps, not shipped. `OpenRfq` is nonconsuming, so each RFQ is capped but the total across RFQs is not.
 Mainnet / real funds | Not done - DevNet faucet tokens and synthetic LocalNet assets only.
 
 The most honest limit is environment topology. Privacy across a participant boundary is proven on LocalNet; settlement on real registry tokens is proven on DevNet; no single run currently demonstrates both at once.
@@ -302,7 +336,7 @@ The DevNet participant requires OIDC access tokens; `SHADOWDESK_CANTON_ACCESS_TO
 
 ## The One-Flow Demo
 
-Open the dashboard (`http://localhost:3001`, or press **Run round** on the live DevNet dashboard).
+Open the dashboard (`http://localhost:3001`, or, with a HackCanton participant login, press **Run round** on the live DevNet dashboard).
 
 - The mandate is approved: buyer + risk officer commit a `TreasuryMandate` with dealers, assets, amount, max price, and expiry.
 - The buyer opens a `BlockTradeRFQ`; `OpenRfq` accepts the in-cap request and would refuse an over-cap one.
@@ -391,6 +425,7 @@ Built on the Canton Network DevNet (HackCanton-01), with fauceted tokens from Bi
 
 Roadmap
 
+- Make the mandate mandatory: add the risk officer as a signatory of `BlockTradeRFQ` and make its mandate link required, so the buyer party cannot open an RFQ outside a mandate.
 - Deploy the V2 registry-native settlement package once DevNet uploads are enabled (today the V1 settle path runs on DevNet).
 - Run a DevNet round across a real participant boundary so cross-participant privacy and real registry tokens appear in one run.
 - Add a third dealer, RFQ amendment, and cumulative mandate-spend enforcement.
