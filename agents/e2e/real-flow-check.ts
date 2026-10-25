@@ -279,11 +279,21 @@ const runRound = async (
 
 const main = async (): Promise<void> => {
   const { beth, cbtc } = env;
-  const pick = (name: string, fallback: TokenInstrument): TokenInstrument =>
-    (envValue(name) ?? "BETH").toUpperCase() === "CBTC" ? cbtc : fallback;
+  const pick = (name: string, fallback: TokenInstrument): TokenInstrument => {
+    const chosen = envValue(name)?.toUpperCase();
+    if (chosen === "CBTC") return cbtc;
+    if (chosen === "BETH") return beth;
+    return fallback;
+  };
 
-  const delivered = pick("SHADOWDESK_REAL_DELIVERED_INSTRUMENT", beth);
+  // Two different instruments by default: with the same instrument on both legs
+  // each party pays and receives the same token, so no balance moves and the
+  // delivery check below cannot pass.
+  const delivered = pick("SHADOWDESK_REAL_DELIVERED_INSTRUMENT", cbtc);
   const payment = pick("SHADOWDESK_REAL_PAYMENT_INSTRUMENT", beth);
+  if (delivered.id === payment.id) {
+    throw new Error(`the delivered and payment instruments are both ${delivered.id}; pick two different instruments`);
+  }
 
   const parties = {
     buyer: required("SHADOWDESK_BUYER_PARTY"),
