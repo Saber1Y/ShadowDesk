@@ -1,5 +1,5 @@
 import { CantonClient, envValue } from "../shared/client.js";
-import { TPL, type BlockTradeRFQ, type QuoteProposal, type Asset, type SelectionPolicy, type TreasuryMandate } from "../shared/types.js";
+import { TPL, isCurrentPackage, type BlockTradeRFQ, type QuoteProposal, type Asset, type SelectionPolicy, type TreasuryMandate } from "../shared/types.js";
 import { CTBILL, CUSDC, type AssetIdSpec } from "../shared/config.js";
 
 export const SELECTION_POLICY: SelectionPolicy = "LowestPriceThenBidId";
@@ -90,7 +90,8 @@ export class BuyerAgent {
     );
     const cash = assets.find((a) => {
       const rec = a as unknown as { createArgument: Asset };
-      return rec.createArgument.id.symbol === cashSpec.symbol &&
+      return isCurrentPackage(a.templateId) &&
+        rec.createArgument.id.symbol === cashSpec.symbol &&
         rec.createArgument.holder === this.buyerParty &&
         Number(rec.createArgument.quantity) >= quantity;
     });

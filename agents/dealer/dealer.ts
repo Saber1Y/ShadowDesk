@@ -1,5 +1,5 @@
 import { CantonClient, envValue } from "../shared/client.js";
-import { TPL, type BlockTradeRFQ, type Asset } from "../shared/types.js";
+import { TPL, isCurrentPackage, type BlockTradeRFQ, type Asset } from "../shared/types.js";
 import { CTBILL, type AssetIdSpec } from "../shared/config.js";
 
 export type PricingPolicy = (rfq: BlockTradeRFQ, dealerParty: string) => string | null;
@@ -51,7 +51,8 @@ export class DealerAgent {
     );
     const inv = assets.find((a) => {
       const rec = a as unknown as { createArgument: Asset };
-      return rec.createArgument.id.symbol === assetSpec.symbol &&
+      return isCurrentPackage(a.templateId) &&
+        rec.createArgument.id.symbol === assetSpec.symbol &&
         rec.createArgument.holder === this.dealerParty &&
         Number(rec.createArgument.quantity) === quantity;
     });

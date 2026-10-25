@@ -208,6 +208,15 @@ export interface SettlementReceiptV2 {
   settledAt: string;
 }
 
+/**
+ * Whether a created event belongs to this package. Template suffixes alone also
+ * match contracts from the earlier shadowdesk-treasury package, which the
+ * current templates cannot consume: Canton refuses to read a contract across a
+ * package-name change.
+ */
+export const isCurrentPackage = (templateId: string): boolean =>
+  templateId.startsWith(`${PACKAGE_ID}:`) || templateId.startsWith(`#${PACKAGE_NAME}:`);
+
 export const suffixOf = (templateId: string) => templateId.split(":").slice(1).join(":");
 
 export interface CreatedEvent {
