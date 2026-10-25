@@ -68,4 +68,5 @@ Update this table only with events that happened and can be named.
 ## Approved one-liners
 
 - Short: "ShadowDesk is policy-bound execution for treasury agents on Canton: an agent cannot trade past what risk approved."
+- Niche: "Treasury execution for Canton node operators, with limits the agent cannot break." Say the CC-to-dollar trade is the target, not something that runs today.
 - Environment line: "Settlement against real Token Standard assets runs on Canton DevNet; cross-participant privacy is proven on LocalNet."

@@ -1,7 +1,7 @@
 # ShadowDesk
 
-**Policy-bound execution for treasury agents on Canton.**
-A risk officer approves a mandate on the ledger, an agent prices a block trade through sealed dealer quotes, and the winning trade settles as atomic delivery-versus-payment.
+**Treasury execution for Canton node operators, with limits the agent cannot break.**
+Two approvers sign a mandate on the ledger, an agent sells within it through sealed quotes from approved desks, and both sides of each trade settle in one transaction.
 
 Approve. Quote. Award. Settle.
 
@@ -12,10 +12,14 @@ It is rendered from code in [`video/`](./video) with Remotion; the script is in 
 
 ## Why it exists
 
-Treasury teams want software agents to execute routine rebalancing, but an agent that holds trading authority can trade too much, at a bad price, or with a counterparty nobody approved.
-When the limits live in the agent's own code, the party being limited is also the party enforcing the limit.
+Canton node operators and app teams earn Canton Coin but pay many of their costs in dollars, so part of that income has to be converted, regularly.
+Whoever runs the conversion, a person or a bot, holds the keys and has no hard limit on how much is sold, at what price, or to whom.
+When the limits live in the seller's own code or runbook, the party being limited is also the party enforcing the limit.
 
-ShadowDesk moves the limits into Daml contracts that the risk officer signs:
+That is our working hypothesis, and we are testing it in conversations with operators ([docs/POSITIONING.md](./docs/POSITIONING.md)).
+The engine is general; node operators are the first niche.
+
+ShadowDesk moves the limits into Daml contracts that a second approver signs:
 
 - A `TreasuryMandate`, signed by the buyer and a risk officer who must be a different party, fixes the approved dealers, the asset, the settlement asset, the maximum amount, the maximum price and the expiry.
 - Every RFQ is co-signed by the risk officer, so `OpenRfq` on an approved mandate is the only way to open one. It refuses anything above the limits or to an unapproved dealer, and `Deal.Settle` checks the mandate again before anything moves.
@@ -25,6 +29,9 @@ ShadowDesk moves the limits into Daml contracts that the risk officer signs:
 An earlier version let the buyer party create an RFQ outside any mandate and settle it.
 The contracts now close that, and `runAgentCannotBypassMandate` tries the bypass four ways.
 The fixed package runs on DevNet, where two rounds settled through it on 2026-10-25 ([evidence](./docs/evidence/devnet-2026-10-25-mandated.json)).
+
+Those rounds traded CBTC for BETH test tokens.
+Selling Canton Coin for a dollar stablecoin, the node operators' actual trade, is not built yet; [docs/POSITIONING.md](./docs/POSITIONING.md) lists what runs today and what is next.
 
 ## Where each claim is proven
 
