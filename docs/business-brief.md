@@ -58,8 +58,7 @@ Known limits are listed in [CLAIMS.md](CLAIMS.md).
 
 ## Next steps
 
-- Upload the mandated package to DevNet and run a round on it (see [DEVNET-UPGRADE.md](DEVNET-UPGRADE.md)).
+- Redeploy the dashboard's worker so live rounds use the mandated package (see [DEVNET-UPGRADE.md](DEVNET-UPGRADE.md)).
 - Talk to treasury and risk operators to find the first niche where agent execution under a mandate matters most.
 - Run one DevNet round across two participants so privacy and real-token settlement are proven together.
-- Publish DevNet transaction evidence in the repository.
 - Enforce cumulative mandate spend across RFQs and make the award rule an on-ledger guarantee.

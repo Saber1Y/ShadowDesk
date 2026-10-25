@@ -1,5 +1,8 @@
 # Upgrading DevNet to the mandated package
 
+Status on 2026-10-25: steps 1 to 3 and 5 are done, and two rounds settled on the new package ([evidence](evidence/devnet-2026-10-25-mandated.json)).
+Step 4, redeploying the worker on the VPS, is still to do, so the dashboard's **Run round** uses the earlier package until then.
+
 The risk officer now co-signs every RFQ, and every RFQ, award and receipt must point at an approved mandate.
 That closes the bypass in which the buyer party created an RFQ outside any mandate and settled it.
 Because the `BlockTradeRFQ`, `SealedQuote` and `SettlementReceipt` templates changed shape, this is not a valid smart-contract upgrade of `shadowdesk-treasury` 1.0.0.
@@ -62,6 +65,8 @@ Press **Run round** on the live dashboard, or run it directly:
 ```bash
 cd agents && ../scripts/env/with-devnet-auth.sh npm run e2e:real-flow
 ```
+
+The round delivers CBTC for BETH by default. `SHADOWDESK_E2E_QUANTITY` is in base units (10 decimals), so `100000000` is 0.01; set `SHADOWDESK_E2E_RESULT_PATH` to a file to save the receipts and update ids.
 
 The buyer and risk officer must be different parties, which they are in the current DevNet profile.
 A round now fails fast with "the risk officer must be a different party from the buyer" if they are not.
