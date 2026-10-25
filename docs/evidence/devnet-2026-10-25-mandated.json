@@ -1,0 +1,51 @@
+{
+  "description": "Two competitive ShadowDesk rounds on Canton DevNet (HackCanton-01) on the mandated package. Each settlement is one Ledger API update containing Deal.Settle and both Canton Token Standard registry legs.",
+  "network": "Canton DevNet, HackCanton-01 participant (one participant hosting all parties)",
+  "package": {
+    "name": "shadowdesk-treasury-mandated",
+    "version": "1.0.0",
+    "packageId": "941cafd1e1db2b1fdf52d2a3235f74113a56e8bad1297c9db18ff140991239eb"
+  },
+  "command": "SHADOWDESK_REAL_DELIVERED_INSTRUMENT=CBTC SHADOWDESK_REAL_PAYMENT_INSTRUMENT=BETH SHADOWDESK_E2E_QUANTITY=100000000 scripts/env/with-devnet-auth.sh npm run e2e:real-flow",
+  "assets": "Fauceted CBTC and BETH test tokens with no monetary value",
+  "rounds": [
+    {
+      "label": "dealerA-undercuts",
+      "bids": [
+        { "dealer": "dealerA", "price": "1.0" },
+        { "dealer": "dealerB", "price": "1.1" }
+      ],
+      "awarded": "dealerA",
+      "bidId": "BID-DEALERA-RFQ-DEMO-1792961258652",
+      "delivered": "0.01 CBTC",
+      "paid": "0.01 BETH",
+      "receiptContractId": "009a0355c0a6b44b50a5a53c9e9d540d17ffab545735afc0a93e35e44d3225a737ca1212207ecb42ba69521ee571bd236d85aa3ed7d35fec1d8722f3f3445f8426486656df",
+      "mandateContractId": "00d8d3f103970141d071cc2fea8839f3df0355bd09a19f4717b578da4d8a641940ca1212203954f116ff651dd6898e9b7c415f8ea7e6856c12eac9bf1c39767c0a07526361",
+      "updateId": "12203360e0f46922a4728f3d857f64844a424b42c35d914be50fb14458fd4f3c19c6",
+      "offset": 5423709,
+      "effectiveAt": "2026-10-25T20:48:45.777021Z",
+      "balances": { "dealerCbtc": "0.0298999989 -> 0.0198999989", "buyerCbtc": "0.2401000019 -> 0.2501000019" }
+    },
+    {
+      "label": "dealerB-undercuts",
+      "bids": [
+        { "dealer": "dealerB", "price": "1.0" },
+        { "dealer": "dealerA", "price": "1.1" }
+      ],
+      "awarded": "dealerB",
+      "bidId": "BID-DEALERB-RFQ-DEMO-1792961344516",
+      "delivered": "0.01 CBTC",
+      "paid": "0.01 BETH",
+      "receiptContractId": "008ac0ab94c00b46aefaf3526b63deb1b41340c1aece5ebd3af2cb914dcf9cc0e5ca1212204a7d703b8419229424aac226dfa2757fdd05babfa5f96cdb988ddc331a423dd1",
+      "mandateContractId": "002897544d19b5d46b640921344c2a669db7a634af0753ac4c4649ba27a6b85fc6ca121220c6ec507f7916f4874146dbfb8c3a4d2e7cc0ebdd052d85633fa8cb0079780f47",
+      "updateId": "1220c98a9dd12825665761b4b24ecc55615eb57388d6b83f00c112f01aa73419126f",
+      "offset": 5423867,
+      "effectiveAt": "2026-10-25T20:50:09.936921Z",
+      "balances": { "dealerCbtc": "0.0299999992 -> 0.0199999992", "buyerCbtc": "0.2501000019 -> 0.2601000019" }
+    }
+  ],
+  "notes": [
+    "The update ids are as returned by the participant; there is no public explorer for this participant.",
+    "The bypass attempts themselves (an RFQ without a mandate, a self-approved mandate, a forged award) are refused in the Daml scenario suite, runAgentCannotBypassMandate, not in this run."
+  ]
+}
