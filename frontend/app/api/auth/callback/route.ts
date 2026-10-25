@@ -36,6 +36,9 @@ export async function GET(request: NextRequest) {
     clearAuthorizationCookie(response.cookies);
     return response;
   } catch (err) {
+    // The browser only sees a generic code, so record the reason server-side.
+    // These messages describe which check failed and never include tokens.
+    console.error(`[auth] callback failed: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
     // A broken session secret is a deployment problem, not a failed handshake;
     // say so instead of blaming the callback.
     const code = err instanceof CantonAuthError && err.code === "configuration" ? "configuration" : "callback";
