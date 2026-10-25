@@ -24,7 +24,7 @@ ShadowDesk moves the limits into Daml contracts that the risk officer signs:
 
 An earlier version let the buyer party create an RFQ outside any mandate and settle it.
 The contracts now close that, and `runAgentCannotBypassMandate` tries the bypass four ways.
-DevNet still runs the earlier package until the new one is uploaded; [docs/DEVNET-UPGRADE.md](./docs/DEVNET-UPGRADE.md) has the steps.
+The fixed package runs on DevNet, where two rounds settled through it on 2026-10-25 ([evidence](./docs/evidence/devnet-2026-10-25-mandated.json)).
 
 ## Where each claim is proven
 
@@ -45,7 +45,8 @@ Every claim, its evidence and the wording to use are in [docs/CLAIMS.md](./docs/
 5. Run the whole round yourself on LocalNet in one command: `./scripts/localnet/run-all.sh`, then open http://localhost:3001.
 
 The live dashboard at https://shadowdesk-inky.vercel.app/dashboard reads the DevNet participant and needs a HackCanton participant login to show ledger data.
-DevNet transaction ids from the settlement run are not yet published in this repository.
+DevNet update ids for the 2026-10-25 rounds are in [docs/evidence/devnet-2026-10-25-mandated.json](./docs/evidence/devnet-2026-10-25-mandated.json).
+The dashboard's **Run round** goes through the worker, which still runs the earlier package until it is redeployed.
 
 This project was built for the Canton Network track of HackCanton Season 3.
 It is a proof of concept, not a production service, and it has no users or pilots yet.
@@ -237,7 +238,7 @@ Reads:
 - Party-authenticated contract queries (buyer sees its RFQs and sealed quotes; a dealer sees only its own quotes).
 - Token Standard registry state through the Digital Asset utilities endpoint (`SHADOWDESK_REGISTRY_URL`).
 
-Contract: `shadowdesk-treasury-mandated` 1.0.0 (package id `941cafd1…` on Daml SDK 3.5.10). LocalNet deploys it on every run. The HackCanton DevNet participant still runs the earlier `shadowdesk-treasury` 1.0.0 (package id `50a21ee1…`) until the upgrade in [docs/DEVNET-UPGRADE.md](./docs/DEVNET-UPGRADE.md) is done.
+Contract: `shadowdesk-treasury-mandated` 1.0.0 (package id `941cafd1…` on Daml SDK 3.5.10), deployed to the HackCanton DevNet participant and to the LocalNet sandbox. The earlier `shadowdesk-treasury` 1.0.0 (package id `50a21ee1…`) is still vetted on DevNet; the worker behind the dashboard's **Run round** uses it until it is redeployed ([docs/DEVNET-UPGRADE.md](./docs/DEVNET-UPGRADE.md)).
 
 There is no custody at the app layer. The agent only submits transactions as its party; it never holds keys for anyone else. On DevNet the settlement tokens (CBTC, BETH) come from the BitSafe faucet, which mints them for the configured settlement parties. The utility registry tracks the allocations; the ledger holds the authored contracts.
 
@@ -264,10 +265,10 @@ Capability | Status
 --- | ---
 Mandate lifecycle (approve, caps, expiry) | Real - scenario suite + live DevNet/LocalNet rounds.
 Cap enforcement on `OpenRfq` | Real - `runMaxPriceCannotBeOverridden` + `e2e:real-guard` rejects an over-cap RFQ.
-Every trade forced through a mandate | Real on LocalNet and in the scenario suite - `runAgentCannotBypassMandate`. DevNet runs the earlier package, which let the buyer settle 5,000,000 at 149.0 against a mandate of 1,000,000 at 101.0, until the upgrade in `docs/DEVNET-UPGRADE.md` is uploaded.
+Every trade forced through a mandate | Real - refused four ways in `runAgentCannotBypassMandate`; the enforcing package runs on DevNet and LocalNet, with two DevNet rounds settled through it on 2026-10-25. The earlier package let the buyer settle 5,000,000 at 149.0 against a mandate of 1,000,000 at 101.0; the dashboard worker still uses it until redeployed.
 Private sealed quotes | Real - `QuoteProposal` signatory to one dealer; rival `all()` empty.
 Deterministic award | Real - `LowestPriceThenBidId`, seal consumes the RFQ.
-Atomic DvP in one update | Real - DevNet 2026-10-08: `Deal.Settle` + both registry legs in one `submitMany`, receipt hash recorded.
+Atomic DvP in one update | Real - DevNet 2026-10-25 on the mandated package: `Deal.Settle` + both registry legs in one `submitMany`, update ids in `docs/evidence/devnet-2026-10-25-mandated.json`.
 Cross-participant privacy proof | LocalNet only - two participants on LocalNet; the DevNet run uses one participant, so the privacy assertion runs against the LocalNet boundary.
 V2 registry-native receipt | LocalNet only - compiles and validates locally, but upload to the DevNet participant returns 403 (uploads need operator credentials), so DevNet settles via the V1 path.
 Best-execution enforced on-ledger | Not enforced - recorded and evidenced from the bid set; the runner asserts the ranking, the ledger does not force it.
@@ -426,7 +427,7 @@ Built on the Canton Network DevNet (HackCanton-01), with fauceted tokens from Bi
 
 Roadmap
 
-- Upload `shadowdesk-treasury-mandated` to DevNet and run a round on it ([docs/DEVNET-UPGRADE.md](./docs/DEVNET-UPGRADE.md)).
+- Redeploy the worker on the VPS so the dashboard's **Run round** uses the mandated package ([docs/DEVNET-UPGRADE.md](./docs/DEVNET-UPGRADE.md)).
 - Deploy the V2 registry-native settlement package once DevNet uploads are enabled (today the V1 settle path runs on DevNet).
 - Run a DevNet round across a real participant boundary so cross-participant privacy and real registry tokens appear in one run.
 - Add a third dealer, RFQ amendment, and cumulative mandate-spend enforcement.
