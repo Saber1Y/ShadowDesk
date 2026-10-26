@@ -10,6 +10,8 @@ Approve. Quote. Award. Settle.
 Watch the 30-second intro: [16:9](./docs/motion/shadowdesk-intro.mp4) · [1:1](./docs/motion/shadowdesk-intro-square.mp4) · [9:16](./docs/motion/shadowdesk-intro-vertical.mp4).
 It is rendered from code in [`video/`](./video) with Remotion; the script is in [docs/MOTION-SCRIPT.md](./docs/MOTION-SCRIPT.md).
 
+**Pitch deck:** [download the PDF](./docs/pitch/ShadowDesk-deck.pdf) (10 slides, October 2026).
+
 ## Why it exists
 
 Canton node operators and app teams earn Canton Coin but pay many of their costs in dollars, so part of that income has to be converted, regularly.
